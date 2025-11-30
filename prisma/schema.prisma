@@ -1,0 +1,350 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// USER MANAGEMENT
+// ==========================================
+
+model User {
+  id                    String    @id @default(uuid())
+  email                 String    @unique
+  username              String    @unique
+  displayName           String?
+  passwordHash          String?   // NULL for Google OAuth users
+  googleId              String?   @unique
+  
+  // Profile fields
+  avatar                String?   // Avatar URL or path
+  country               String?   // ISO country code (e.g., 'US', 'IR')
+  role                  UserRole  @default(USER) // User role
+  
+  // Account status
+  status                UserStatus @default(ACTIVE)
+  emailVerified         Boolean   @default(false)
+  forcePasswordChange   Boolean   @default(false)
+  
+  // Security
+  failedLoginAttempts   Int       @default(0)
+  lastFailedLoginAt     DateTime?
+  lockedUntil           DateTime?
+  lastLoginAt           DateTime?
+  
+  // Timestamps
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  // Relations
+  gamesAsWhite          Game[]    @relation("WhitePlayer")
+  gamesAsBlack          Game[]    @relation("BlackPlayer")
+  stats                 UserStats?
+  walletKeys            WalletKey[]
+  transactions          Transaction[]
+  adminActions          AdminAction[] @relation("AdminUser")
+  targetedAdminActions  AdminAction[] @relation("TargetUser")
+  
+  @@index([email])
+  @@index([username])
+  @@index([status])
+  @@index([googleId])
+  @@map("users")
+}
+
+enum UserStatus {
+  ACTIVE
+  BANNED
+  SUSPENDED
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+// ==========================================
+// USER STATISTICS
+// ==========================================
+
+model UserStats {
+  userId              String   @id
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Game statistics
+  gamesPlayed         Int      @default(0)
+  gamesWon            Int      @default(0)
+  gamesLost           Int      @default(0)
+  gamesAbandoned      Int      @default(0)
+  
+  // Set statistics
+  totalSetsWon        Int      @default(0)
+  totalSetsLost       Int      @default(0)
+  
+  // Streaks
+  currentStreak       Int      @default(0)
+  bestStreak          Int      @default(0)
+  
+  // Playtime
+  totalPlaytimeSeconds Int     @default(0)
+  
+  // Wallet balance (in USDT)
+  balance             Decimal  @default(0) @db.Decimal(18, 6)
+  
+  updatedAt           DateTime @updatedAt
+  
+  @@map("user_stats")
+}
+
+// ==========================================
+// GAME MANAGEMENT
+// ==========================================
+
+model Game {
+  id                String      @id @default(uuid())
+  
+  // Players
+  whitePlayerId     String
+  blackPlayerId     String
+  whitePlayer       User        @relation("WhitePlayer", fields: [whitePlayerId], references: [id])
+  blackPlayer       User        @relation("BlackPlayer", fields: [blackPlayerId], references: [id])
+  
+  // Game type
+  gameType          GameType    @default(AI) // AI, ONLINE, or TOURNAMENT
+  
+  // Game state (stored as JSON for flexibility)
+  gameState         Json        // Current board state
+  moveHistory       Json[]      // Array of all moves with timestamps
+  
+  // Game settings
+  timeControl       Int         @default(120) // seconds per player
+  gameMode          GameMode    @default(CLASSIC)
+  betAmount         Decimal?    @db.Decimal(18, 6) // NULL for non-bet games
+  
+  // Game result
+  status            GameStatus  @default(ACTIVE)
+  winner            PlayerColor?
+  whiteSetsWon      Int         @default(0)
+  blackSetsWon      Int         @default(0)
+  endReason         EndReason?
+  
+  // Timestamps
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  startedAt         DateTime?
+  endedAt           DateTime?
+  
+  // Relations
+  moves             GameMove[]
+  
+  @@index([status, updatedAt])
+  @@index([whitePlayerId])
+  @@index([blackPlayerId])
+  @@index([status])
+  @@index([gameType])
+  @@map("games")
+}
+
+enum GameMode {
+  CLASSIC
+  MODERN
+  TOURNAMENT
+}
+
+enum GameType {
+  AI         // Play against AI
+  ONLINE     // Play against another player online
+  TOURNAMENT // Part of a tournament
+}
+
+enum GameStatus {
+  WAITING    // Waiting for players
+  ACTIVE     // Game in progress
+  COMPLETED  // Game finished normally
+  ABANDONED  // Player left/timeout
+  CANCELLED  // Cancelled by admin
+}
+
+enum PlayerColor {
+  WHITE
+  BLACK
+}
+
+enum EndReason {
+  NORMAL_WIN
+  RESIGNATION
+  TIMEOUT
+  ABANDONMENT
+  ADMIN_CANCELLED
+}
+
+// ==========================================
+// GAME MOVES (Detailed move tracking)
+// ==========================================
+
+model GameMove {
+  id              String      @id @default(uuid())
+  gameId          String
+  game            Game        @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  
+  // Move details
+  playerColor     PlayerColor
+  moveNumber      Int         // Sequential move number in the game
+  
+  // Move data
+  from            Int         // Point number (0-23, or -1 for bar)
+  to              Int         // Point number (0-23, or 24 for off)
+  diceUsed        Int         // Which dice value was used for this move
+  isHit           Boolean     @default(false) // Did this move hit opponent's checker?
+  
+  // Board state snapshot (optional - for replay/analysis)
+  boardStateBefore Json?
+  boardStateAfter  Json?
+  
+  // Timing
+  timeRemaining   Int?        // Seconds remaining on player's clock
+  moveTime        Int?        // Milliseconds taken to make this move
+  
+  createdAt       DateTime    @default(now())
+  
+  @@index([gameId, moveNumber])
+  @@index([gameId])
+  @@map("game_moves")
+}
+
+// ==========================================
+// WALLET & TRANSACTIONS (Phase 2)
+// ==========================================
+
+model WalletKey {
+  id                  String    @id @default(uuid())
+  userId              String
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  network             Network
+  address             String
+  encryptedPrivateKey String    // AES-256-GCM encrypted
+  
+  createdAt           DateTime  @default(now())
+  
+  @@unique([userId, network])
+  @@index([userId])
+  @@index([address])
+  @@map("wallet_keys")
+}
+
+enum Network {
+  BNB_BSC   // Binance Smart Chain
+  TRON      // TRON Network
+}
+
+model Transaction {
+  id            String            @id @default(uuid())
+  userId        String
+  user          User              @relation(fields: [userId], references: [id])
+  
+  type          TransactionType
+  amount        Decimal           @db.Decimal(18, 6)
+  network       Network
+  
+  // Blockchain data
+  txHash        String?           @unique
+  fromAddress   String?
+  toAddress     String?
+  
+  // Status
+  status        TransactionStatus @default(PENDING)
+  
+  // Metadata
+  metadata      Json?             // Additional data (gas, confirmations, etc)
+  
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  completedAt   DateTime?
+  
+  @@index([userId])
+  @@index([status])
+  @@index([txHash])
+  @@index([type, createdAt])
+  @@map("transactions")
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  GAME_WIN
+  GAME_LOSS
+  ADMIN_ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// ==========================================
+// ADMIN MANAGEMENT
+// ==========================================
+
+model AdminAction {
+  id              String       @id @default(uuid())
+  
+  // Admin who performed action
+  adminId         String
+  admin           User         @relation("AdminUser", fields: [adminId], references: [id])
+  
+  // Target user (if applicable)
+  targetUserId    String?
+  targetUser      User?        @relation("TargetUser", fields: [targetUserId], references: [id])
+  
+  // Action details
+  actionType      AdminActionType
+  reason          String?
+  metadata        Json?        // Additional data (ban duration, etc)
+  
+  // Request metadata
+  ipAddress       String?
+  
+  createdAt       DateTime     @default(now())
+  
+  @@index([adminId])
+  @@index([targetUserId])
+  @@index([actionType, createdAt])
+  @@map("admin_actions")
+}
+
+enum AdminActionType {
+  BAN_USER
+  UNBAN_USER
+  DELETE_USER
+  RESET_PASSWORD
+  ADJUST_BALANCE
+  CANCEL_GAME
+  VERIFY_EMAIL
+  SYSTEM_MESSAGE
+}
+
+// ==========================================
+// SESSION MANAGEMENT (Optional - for refresh tokens)
+// ==========================================
+
+model RefreshToken {
+  id          String   @id @default(uuid())
+  userId      String
+  token       String   @unique
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}

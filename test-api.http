@@ -1,0 +1,90 @@
+# Nard Arena API Testing
+# Use with REST Client extension in VS Code
+
+@baseUrl = http://localhost:3002/api
+@accessToken = YOUR_TOKEN_HERE
+
+### Health Check
+GET {{baseUrl}}
+
+### Register New User with Avatar and Country
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "testuser@example.com",
+  "username": "testplayer",
+  "password": "Test123!@#",
+  "displayName": "Test Player",
+  "avatar": "https://i.pravatar.cc/150?img=12",
+  "country": "US"
+}
+
+### Register with Iran Country
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "iranian_player@example.com",
+  "username": "iranian_pro",
+  "password": "IranPlayer123!",
+  "displayName": "نوید ایرانی",
+  "avatar": "https://i.pravatar.cc/150?img=33",
+  "country": "IR"
+}
+
+### Login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@nardarena.com",
+  "password": "Admin123!"
+}
+
+### Login as Test User
+# @name loginTest
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "testuser@example.com",
+  "password": "Test123!@#"
+}
+
+### Get User Profile (Requires JWT Token)
+GET {{baseUrl}}/users/profile
+Authorization: Bearer {{accessToken}}
+
+### Update Profile with New Avatar and Country
+PUT {{baseUrl}}/users/profile
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "displayName": "Updated Player Name",
+  "avatar": "https://i.pravatar.cc/150?img=50",
+  "country": "CA"
+}
+
+### Create Game
+POST {{baseUrl}}/games/create
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "betAmount": 100,
+  "timeLimit": 180
+}
+
+### Get Game Details
+GET {{baseUrl}}/games/{{gameId}}
+Authorization: Bearer {{accessToken}}
+
+### Admin: Get Platform Stats
+GET {{baseUrl}}/admin/stats
+Authorization: Bearer {{accessToken}}
+
+### Admin: Get All Users
+GET {{baseUrl}}/admin/users
+Authorization: Bearer {{accessToken}}
