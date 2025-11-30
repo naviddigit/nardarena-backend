@@ -46,7 +46,9 @@ model User {
   gamesAsWhite          Game[]    @relation("WhitePlayer")
   gamesAsBlack          Game[]    @relation("BlackPlayer")
   stats                 UserStats?
-  walletKeys            WalletKey[]
+  userWallets           UserWallet[]
+  deposits              Deposit[]
+  withdrawals           Withdrawal[]
   transactions          Transaction[]
   adminActions          AdminAction[] @relation("AdminUser")
   targetedAdminActions  AdminAction[] @relation("TargetUser")
@@ -219,29 +221,137 @@ model GameMove {
 }
 
 // ==========================================
-// WALLET & TRANSACTIONS (Phase 2)
+// WALLET & CRYPTO MANAGEMENT
 // ==========================================
 
-model WalletKey {
-  id                  String    @id @default(uuid())
-  userId              String
-  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+// User wallets - each user has one wallet per network
+model UserWallet {
+  id                    String    @id @default(uuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  network             Network
-  address             String
-  encryptedPrivateKey String    // AES-256-GCM encrypted
+  network               Network
+  address               String    @unique
+  encryptedPrivateKey   String    // AES-256-GCM encrypted
+  salt                  String    // For PBKDF2
   
-  createdAt           DateTime  @default(now())
+  balance               Decimal   @default(0) @db.Decimal(18, 6)
+  lastCheckedAt         DateTime?
+  
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  
+  // Relations
+  deposits              Deposit[]
   
   @@unique([userId, network])
   @@index([userId])
   @@index([address])
-  @@map("wallet_keys")
+  @@index([createdAt])
+  @@index([lastCheckedAt])
+  @@map("user_wallets")
+}
+
+// Deposit transactions
+model Deposit {
+  id                String          @id @default(uuid())
+  userId            String
+  user              User            @relation(fields: [userId], references: [id])
+  walletId          String
+  wallet            UserWallet      @relation(fields: [walletId], references: [id])
+  
+  network           Network
+  txHash            String          @unique
+  fromAddress       String
+  toAddress         String
+  amount            Decimal         @db.Decimal(18, 6)
+  blockNumber       BigInt?
+  
+  status            DepositStatus   @default(PENDING)
+  confirmedAt       DateTime?
+  
+  createdAt         DateTime        @default(now())
+  
+  @@index([userId])
+  @@index([walletId])
+  @@index([status])
+  @@index([txHash])
+  @@index([createdAt])
+  @@map("deposits")
+}
+
+enum DepositStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+// Withdrawal requests
+model Withdrawal {
+  id                String            @id @default(uuid())
+  userId            String
+  user              User              @relation(fields: [userId], references: [id])
+  
+  network           Network
+  toAddress         String
+  amount            Decimal           @db.Decimal(18, 6)
+  networkFee        Decimal           @db.Decimal(18, 6)
+  serviceFee        Decimal           @db.Decimal(18, 6)
+  totalFee          Decimal           @db.Decimal(18, 6)
+  
+  txHash            String?           @unique
+  status            WithdrawalStatus  @default(PENDING)
+  adminNote         String?
+  
+  requestedAt       DateTime          @default(now())
+  processedAt       DateTime?
+  completedAt       DateTime?
+  
+  @@index([userId])
+  @@index([status])
+  @@index([txHash])
+  @@index([requestedAt])
+  @@map("withdrawals")
+}
+
+enum WithdrawalStatus {
+  PENDING       // Waiting for processing
+  PROCESSING    // Transaction in progress
+  COMPLETED     // Successfully completed
+  FAILED        // Transaction failed
+  REJECTED      // Rejected by admin
+}
+
+// Master wallets for settlements
+model MasterWallet {
+  id                    String    @id @default(uuid())
+  network               Network   @unique
+  address               String    @unique
+  encryptedPrivateKey   String    // AES-256-GCM encrypted
+  salt                  String    // For PBKDF2
+  
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  lastSettlementAt      DateTime?
+  
+  @@map("master_wallets")
+}
+
+// System-wide settings
+model SystemSetting {
+  key           String    @id
+  value         String
+  description   String?
+  category      String    // 'api', 'network', 'withdraw', 'fee', 'master_wallet'
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([category])
+  @@map("system_settings")
 }
 
 enum Network {
-  BNB_BSC   // Binance Smart Chain
-  TRON      // TRON Network
+  TRC20   // Tron Network (USDT)
+  BSC     // Binance Smart Chain (USDT)
 }
 
 model Transaction {

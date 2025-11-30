@@ -109,6 +109,50 @@ async function main() {
   });
   console.log('✅ Test user 2 created:', user2.email);
 
+  // ==========================================
+  // SYSTEM SETTINGS - Wallet Configuration
+  // ==========================================
+  
+  const systemSettings = [
+    // API Keys
+    { key: 'trongrid_api_key', value: '', description: 'TronGrid API Key', category: 'api' },
+    { key: 'bscscan_api_key', value: '', description: 'BSCScan API Key', category: 'api' },
+    
+    // Network
+    { key: 'use_testnet', value: 'true', description: 'Use Testnet (true) or Mainnet (false)', category: 'network' },
+    { key: 'wallet_check_interval_minutes', value: '10', description: 'Check interval in minutes', category: 'network' },
+    { key: 'wallet_check_history_hours', value: '10', description: 'Check wallets created within X hours', category: 'network' },
+    { key: 'trc20_confirmations_required', value: '19', description: 'TRC20 confirmations needed', category: 'network' },
+    { key: 'bsc_confirmations_required', value: '12', description: 'BSC confirmations needed', category: 'network' },
+    
+    // Withdraw
+    { key: 'min_withdraw_amount', value: '10.00', description: 'Minimum withdraw amount (USD)', category: 'withdraw' },
+    { key: 'max_withdraw_amount', value: '999999.00', description: 'Maximum withdraw amount (USD)', category: 'withdraw' },
+    { key: 'max_daily_withdraw_per_user', value: '999999.00', description: 'Daily withdraw limit per user (USD)', category: 'withdraw' },
+    { key: 'auto_withdraw_enabled', value: 'false', description: 'Auto process withdrawals', category: 'withdraw' },
+    { key: 'require_email_verified', value: 'true', description: 'Require verified email for withdraw', category: 'withdraw' },
+    
+    // Fees
+    { key: 'trc20_network_fee_usd', value: '1.00', description: 'TRC20 network fee in USD', category: 'fee' },
+    { key: 'bsc_network_fee_usd', value: '1.00', description: 'BSC network fee in USD', category: 'fee' },
+    { key: 'withdraw_fee_percent', value: '0.5', description: 'Additional fee percentage on network fee', category: 'fee' },
+    
+    // Master Wallet
+    { key: 'auto_settlement_enabled', value: 'true', description: 'Auto settle to master wallet daily', category: 'master_wallet' },
+    { key: 'settlement_threshold_usd', value: '1000.00', description: 'Min balance for auto settlement', category: 'master_wallet' },
+    { key: 'master_wallet_trc20_address', value: '', description: 'Master wallet address for TRC20', category: 'master_wallet' },
+    { key: 'master_wallet_bsc_address', value: '', description: 'Master wallet address for BSC', category: 'master_wallet' },
+  ];
+
+  for (const setting of systemSettings) {
+    await prisma.systemSetting.upsert({
+      where: { key: setting.key },
+      update: {},
+      create: setting,
+    });
+  }
+  console.log(`✅ Created ${systemSettings.length} system settings`);
+
   console.log('🎉 Database seed completed!');
 }
 
