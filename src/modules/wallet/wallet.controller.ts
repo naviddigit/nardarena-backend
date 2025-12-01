@@ -4,6 +4,7 @@ import {
   Get,
   Body,
   Param,
+  Query,
   UseGuards,
   Request,
   BadRequestException,
@@ -23,8 +24,8 @@ export class WalletController {
    * POST /wallet/generate
    */
   @Post('generate')
-  async generateWallet(@Request() req, @Body() dto: GenerateWalletDto) {
-    const userId = req.user.userId;
+  async generateWallet(@Request() req: any, @Body() dto: GenerateWalletDto) {
+    const userId = req.user.sub || req.user.id;
     return this.walletService.generateWallet(userId, dto.network);
   }
 
@@ -33,8 +34,10 @@ export class WalletController {
    * GET /wallet/:network
    */
   @Get(':network')
-  async getWallet(@Request() req, @Param('network') network: string) {
-    const userId = req.user.userId;
+  async getWallet(@Request() req: any, @Param('network') network: string) {
+    console.log('🔍 req.user:', JSON.stringify(req.user, null, 2));
+    const userId = req.user.sub || req.user.id;
+    console.log('🔍 userId extracted:', userId);
     
     // Validate network
     if (!Object.values(Network).includes(network as Network)) {
@@ -56,8 +59,8 @@ export class WalletController {
    * GET /wallet
    */
   @Get()
-  async getUserWallets(@Request() req) {
-    const userId = req.user.userId;
+  async getUserWallets(@Request() req: any) {
+    const userId = req.user.sub || req.user.id;
     return this.walletService.getUserWallets(userId);
   }
 
@@ -66,7 +69,7 @@ export class WalletController {
    * POST /wallet/check-balance
    */
   @Post('check-balance')
-  async checkBalance(@Request() req, @Body('walletId') walletId: string) {
+  async checkBalance(@Request() req: any, @Body('walletId') walletId: string) {
     if (!walletId) {
       throw new BadRequestException('walletId is required');
     }
@@ -92,8 +95,8 @@ export class WalletController {
    * POST /wallet/withdraw
    */
   @Post('withdraw')
-  async requestWithdrawal(@Request() req, @Body() dto: WithdrawDto) {
-    const userId = req.user.userId;
+  async requestWithdrawal(@Request() req: any, @Body() dto: WithdrawDto) {
+    const userId = req.user.sub || req.user.id;
     return this.walletService.requestWithdrawal(
       userId,
       dto.network,
@@ -104,21 +107,39 @@ export class WalletController {
 
   /**
    * Get user deposits
-   * GET /wallet/deposits
+   * GET /wallet/transactions/deposits
    */
   @Get('transactions/deposits')
-  async getDeposits(@Request() req) {
-    const userId = req.user.userId;
-    return this.walletService.getUserDeposits(userId);
+  async getDeposits(@Request() req: any, @Query('page') page?: string, @Query('limit') limit?: string) {
+    const userId = req.user.sub || req.user.id;
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    const data = await this.walletService.getUserDeposits(userId, limitNum);
+    
+    return {
+      data,
+      total: data.length,
+      page: pageNum,
+      limit: limitNum,
+    };
   }
 
   /**
    * Get user withdrawals
-   * GET /wallet/withdrawals
+   * GET /wallet/transactions/withdrawals
    */
   @Get('transactions/withdrawals')
-  async getWithdrawals(@Request() req) {
-    const userId = req.user.userId;
-    return this.walletService.getUserWithdrawals(userId);
+  async getWithdrawals(@Request() req: any, @Query('page') page?: string, @Query('limit') limit?: string) {
+    const userId = req.user.sub || req.user.id;
+    const pageNum = page ? parseInt(page, 10) : 1;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
+    const data = await this.walletService.getUserWithdrawals(userId, limitNum);
+    
+    return {
+      data,
+      total: data.length,
+      page: pageNum,
+      limit: limitNum,
+    };
   }
 }

@@ -1,15 +1,19 @@
-import { Controller, Get, Put, Param, Query, UseGuards, Body } from '@nestjs/common';
+import { Controller, Get, Put, Param, Query, UseGuards, Body, Post, Delete } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AdminService } from './admin.service';
+import { DatabaseMaintenanceService } from './database-maintenance.service';
 
 @ApiTags('admin')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard)
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly databaseMaintenance: DatabaseMaintenanceService
+  ) {}
 
   @Get('stats')
   @ApiOperation({ summary: 'Get platform statistics' })
@@ -92,5 +96,60 @@ export class AdminController {
     @CurrentUser('sub') adminId: string,
   ) {
     return this.adminService.updateUserStatus(userId, 'BANNED', adminId);
+  }
+
+  // ============================================
+  // DATABASE MANAGEMENT ENDPOINTS
+  // ============================================
+
+  @Get('database/stats')
+  @ApiOperation({ summary: 'Get comprehensive database statistics' })
+  async getDatabaseStats() {
+    return this.databaseMaintenance.getDatabaseStats();
+  }
+
+  @Get('database/recommendations')
+  @ApiOperation({ summary: 'Get cleanup recommendations' })
+  async getCleanupRecommendations() {
+    return this.databaseMaintenance.getCleanupRecommendations();
+  }
+
+  @Post('database/cleanup-moves')
+  @ApiOperation({ summary: 'Clean up old game moves (keeps moveHistory JSON)' })
+  async cleanupOldGameMoves(
+    @Query('olderThanDays') olderThanDays?: string,
+    @Query('dryRun') dryRun?: string,
+  ) {
+    const days = olderThanDays ? parseInt(olderThanDays) : 10;
+    const isDryRun = dryRun === 'true';
+    return this.databaseMaintenance.cleanupOldGameMoves(days, isDryRun);
+  }
+
+  @Post('database/archive-games')
+  @ApiOperation({ summary: 'Archive old games (removes detailed move data)' })
+  async archiveOldGames(
+    @Query('olderThanMonths') olderThanMonths?: string,
+    @Query('dryRun') dryRun?: string,
+  ) {
+    const months = olderThanMonths ? parseInt(olderThanMonths) : 6;
+    const isDryRun = dryRun === 'true';
+    return this.databaseMaintenance.archiveOldGames(months, isDryRun);
+  }
+
+  @Delete('database/delete-old-games')
+  @ApiOperation({ summary: 'Delete very old games entirely (permanent)' })
+  async deleteVeryOldGames(
+    @Query('olderThanMonths') olderThanMonths?: string,
+    @Query('dryRun') dryRun?: string,
+  ) {
+    const months = olderThanMonths ? parseInt(olderThanMonths) : 12;
+    const isDryRun = dryRun === 'true';
+    return this.databaseMaintenance.deleteVeryOldGames(months, isDryRun);
+  }
+
+  @Post('database/optimize')
+  @ApiOperation({ summary: 'Optimize database (VACUUM, ANALYZE, REINDEX)' })
+  async optimizeDatabase() {
+    return this.databaseMaintenance.optimizeTables();
   }
 }

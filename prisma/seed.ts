@@ -32,8 +32,8 @@ async function main() {
   });
   console.log('✅ AI Player created:', aiUser.username);
 
-  // Create admin user
-  const adminPassword = await bcrypt.hash('Admin123!', 12);
+  // Create admin user with strong password
+  const adminPassword = await bcrypt.hash('NardArena@Admin#2025!Secure', 12);
   const admin = await prisma.user.upsert({
     where: { email: 'admin@nardarena.com' },
     update: {},
@@ -53,6 +53,7 @@ async function main() {
     },
   });
   console.log('✅ Admin user created:', admin.email);
+  console.log('⚠️  Admin Password: NardArena@Admin#2025!Secure');
 
   // Create test users
   const testPassword = await bcrypt.hash('Test123!', 12);
@@ -142,6 +143,26 @@ async function main() {
     { key: 'settlement_threshold_usd', value: '1000.00', description: 'Min balance for auto settlement', category: 'master_wallet' },
     { key: 'master_wallet_trc20_address', value: '', description: 'Master wallet address for TRC20', category: 'master_wallet' },
     { key: 'master_wallet_bsc_address', value: '', description: 'Master wallet address for BSC', category: 'master_wallet' },
+    
+    // Game Settings - Timing
+    { key: 'game.time_per_move', value: '30', description: 'Time per move in seconds', category: 'game' },
+    { key: 'game.total_time_per_game', value: '120', description: 'Total time per game in seconds (2 minutes)', category: 'game' },
+    
+    // Game Settings - Scoring
+    { key: 'game.points_per_win', value: '1', description: 'Points awarded per win', category: 'game' },
+    { key: 'game.double_enabled', value: 'true', description: 'Enable double cube feature', category: 'game' },
+    { key: 'game.mars_enabled', value: 'true', description: 'Enable mars (gammon) scoring', category: 'game' },
+    { key: 'game.mars_applies_on_doubled', value: 'true', description: 'Mars applies when game is doubled', category: 'game' },
+    
+    // Game Settings - Rules
+    { key: 'game.allow_undo', value: 'false', description: 'Allow players to undo moves', category: 'game' },
+    { key: 'game.one_game_per_player', value: 'true', description: 'Allow only one active game per player', category: 'game' },
+    { key: 'game.max_board_requests', value: '5', description: 'Maximum board state requests per game', category: 'game' },
+    
+    // Game Settings - Betting
+    { key: 'game.min_bet_amount', value: '5', description: 'Minimum bet amount in USDT', category: 'game' },
+    { key: 'game.max_bet_amount', value: '500', description: 'Maximum bet amount in USDT', category: 'game' },
+    { key: 'game.available_bet_amounts', value: '5,10,25,50,100,250,500', description: 'Available bet amounts (comma-separated)', category: 'game' },
   ];
 
   for (const setting of systemSettings) {

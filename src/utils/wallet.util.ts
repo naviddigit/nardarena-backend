@@ -1,5 +1,10 @@
 import { ethers } from 'ethers';
-const TronWeb = require('tronweb');
+import * as crypto from 'crypto';
+import basex from 'base-x';
+
+// Base58 alphabet for Bitcoin/Tron
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const bs58 = basex(BASE58);
 
 /**
  * Network configuration
@@ -82,22 +87,39 @@ export function generateBscWallet(): {
 }
 
 /**
- * Generate TRC20 (Tron) wallet
+ * Generate TRC20 (Tron) wallet using crypto
  */
 export function generateTrc20Wallet(useTestnet: boolean = false): {
   address: string;
   privateKey: string;
 } {
-  const tronWeb = new TronWeb({
-    fullHost: useTestnet
-      ? 'https://api.shasta.trongrid.io'
-      : 'https://api.trongrid.io',
-  });
+  // Generate random private key (32 bytes)
+  const privateKeyBytes = crypto.randomBytes(32);
+  const privateKeyHex = privateKeyBytes.toString('hex');
 
-  const account = tronWeb.createAccount();
+  // For Tron addresses, we'll use ethers to generate the address
+  // then convert it to Tron format (base58 with prefix)
+  const wallet = new ethers.Wallet(privateKeyHex);
+  const ethAddress = wallet.address;
+  
+  // Convert Ethereum address to Tron address format
+  // Tron mainnet addresses start with 'T' (0x41 prefix)
+  // Testnet addresses start with 'T' as well but use different network
+  const addressBytes = Buffer.from(ethAddress.slice(2), 'hex');
+  const prefixedAddress = Buffer.concat([Buffer.from([0x41]), addressBytes]);
+  
+  // Calculate checksum
+  const hash1 = crypto.createHash('sha256').update(prefixedAddress).digest();
+  const hash2 = crypto.createHash('sha256').update(hash1).digest();
+  const checksum = hash2.slice(0, 4);
+  
+  // Combine address and checksum, then encode to base58
+  const addressWithChecksum = Buffer.concat([prefixedAddress, checksum]);
+  const tronAddress = bs58.encode(addressWithChecksum);
+
   return {
-    address: account.address.base58,
-    privateKey: account.privateKey,
+    address: tronAddress,
+    privateKey: privateKeyHex,
   };
 }
 
@@ -105,7 +127,7 @@ export function generateTrc20Wallet(useTestnet: boolean = false): {
  * Validate BSC address format
  */
 export function isValidBscAddress(address: string): boolean {
-  return ethers.isAddress(address);
+  return ethers.utils.isAddress(address);
 }
 
 /**
@@ -115,13 +137,30 @@ export function isValidTrc20Address(
   address: string,
   useTestnet: boolean = false
 ): boolean {
-  const tronWeb = new TronWeb({
-    fullHost: useTestnet
-      ? 'https://api.shasta.trongrid.io'
-      : 'https://api.trongrid.io',
-  });
-
-  return tronWeb.isAddress(address);
+  try {
+    // Tron addresses should start with 'T' and be 34 characters long
+    if (!address || address.length !== 34 || !address.startsWith('T')) {
+      return false;
+    }
+    
+    // Try to decode base58
+    const decoded = bs58.decode(address);
+    if (decoded.length !== 25) {
+      return false;
+    }
+    
+    // Verify checksum
+    const addressBytes = decoded.slice(0, 21);
+    const checksum = decoded.slice(21);
+    
+    const hash1 = crypto.createHash('sha256').update(Buffer.from(addressBytes)).digest();
+    const hash2 = crypto.createHash('sha256').update(hash1).digest();
+    const expectedChecksum = hash2.slice(0, 4);
+    
+    return Buffer.from(checksum).equals(Buffer.from(expectedChecksum));
+  } catch (error) {
+    return false;
+  }
 }
 
 /**
@@ -132,33 +171,65 @@ export async function getBscUsdtBalance(
   contractAddress: string,
   rpcUrl: string
 ): Promise<string> {
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
   
   // USDT ABI for balanceOf function
   const abi = ['function balanceOf(address) view returns (uint256)'];
   const contract = new ethers.Contract(contractAddress, abi, provider);
   
   const balance = await contract.balanceOf(address);
-  return ethers.formatUnits(balance, 18); // BSC USDT has 18 decimals
+  return ethers.utils.formatUnits(balance, 18); // BSC USDT has 18 decimals
 }
 
 /**
- * Get USDT balance for TRC20 address
+ * Get USDT balance for TRC20 address using TronGrid API
  */
 export async function getTrc20UsdtBalance(
   address: string,
   contractAddress: string,
   rpcUrl: string
 ): Promise<string> {
-  const tronWeb = new TronWeb({
-    fullHost: rpcUrl,
-  });
-
-  const contract = await tronWeb.contract().at(contractAddress);
-  const balance = await contract.balanceOf(address).call();
-  
-  // TRC20 USDT has 6 decimals
-  return (Number(balance) / 1000000).toFixed(6);
+  try {
+    // Use TronGrid API to get token balance
+    const apiUrl = rpcUrl.replace('/jsonrpc', '');
+    const response = await fetch(
+      `${apiUrl}/v1/accounts/${address}/transactions/trc20?limit=1&contract_address=${contractAddress}`
+    );
+    
+    if (!response.ok) {
+      return '0';
+    }
+    
+    const data = await response.json();
+    
+    // Alternative: Direct balance query
+    const balanceResponse = await fetch(
+      `${apiUrl}/v1/accounts/${address}`
+    );
+    
+    if (!balanceResponse.ok) {
+      return '0';
+    }
+    
+    const balanceData = await balanceResponse.json();
+    const trc20Balances = balanceData.data?.[0]?.trc20 || [];
+    
+    // Find USDT balance
+    const usdtBalance = trc20Balances.find(
+      (token: any) => token[contractAddress]
+    );
+    
+    if (usdtBalance && usdtBalance[contractAddress]) {
+      const balance = usdtBalance[contractAddress];
+      // TRC20 USDT has 6 decimals
+      return (Number(balance) / 1000000).toFixed(6);
+    }
+    
+    return '0';
+  } catch (error) {
+    console.error('Error fetching TRC20 balance:', error);
+    return '0';
+  }
 }
 
 /**
@@ -171,7 +242,7 @@ export async function sendBscUsdt(
   contractAddress: string,
   rpcUrl: string
 ): Promise<string> {
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
   const wallet = new ethers.Wallet(privateKey, provider);
   
   // USDT ABI for transfer function
@@ -179,7 +250,7 @@ export async function sendBscUsdt(
   const contract = new ethers.Contract(contractAddress, abi, wallet);
   
   // Convert amount to wei (18 decimals for BSC USDT)
-  const amountWei = ethers.parseUnits(amount, 18);
+  const amountWei = ethers.utils.parseUnits(amount, 18);
   
   // Send transaction
   const tx = await contract.transfer(toAddress, amountWei);
@@ -190,6 +261,7 @@ export async function sendBscUsdt(
 
 /**
  * Send USDT on TRC20 network
+ * Note: For production, consider using TronWeb library or external signing service
  */
 export async function sendTrc20Usdt(
   privateKey: string,
@@ -198,18 +270,13 @@ export async function sendTrc20Usdt(
   contractAddress: string,
   rpcUrl: string
 ): Promise<string> {
-  const tronWeb = new TronWeb({
-    fullHost: rpcUrl,
-    privateKey: privateKey,
-  });
-
-  const contract = await tronWeb.contract().at(contractAddress);
+  // For now, we'll throw an error as sending requires TronWeb or signing service
+  // This functionality should be implemented when withdrawal feature is needed
+  throw new Error(
+    'TRC20 sending not implemented. Use TronWeb library or external signing service for production.'
+  );
   
-  // Convert amount to sun (6 decimals for TRC20 USDT)
-  const amountSun = Math.floor(parseFloat(amount) * 1000000);
-  
-  // Send transaction
-  const tx = await contract.transfer(toAddress, amountSun).send();
-  
-  return tx;
+  // TODO: Implement using TronGrid API or TronWeb when needed
+  // const amountSun = Math.floor(parseFloat(amount) * 1000000);
+  // ...
 }
