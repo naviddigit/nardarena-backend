@@ -1,0 +1,116 @@
+### Test AI Move - Simple Board
+POST http://localhost:3002/api/game/ai-move
+Content-Type: application/json
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+{
+  "points": [
+    {"white": 2, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 5},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 3},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 5, "black": 0},
+    {"white": 5, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 3, "black": 0},
+    {"white": 0, "black": 5},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 2}
+  ],
+  "bar": {"white": 0, "black": 0},
+  "off": {"white": 0, "black": 0},
+  "currentPlayer": "white",
+  "diceRoll": [3, 5],
+  "difficulty": "MEDIUM"
+}
+
+### Test AI Move - With Bar
+POST http://localhost:3002/api/game/ai-move
+Content-Type: application/json
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+{
+  "points": [
+    {"white": 0, "black": 2},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 5},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 3},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 5, "black": 0},
+    {"white": 5, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 3, "black": 0},
+    {"white": 0, "black": 5},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0}
+  ],
+  "bar": {"white": 2, "black": 0},
+  "off": {"white": 0, "black": 0},
+  "currentPlayer": "white",
+  "diceRoll": [3, 4],
+  "difficulty": "HARD"
+}
+
+### Test AI Move - Bearing Off
+POST http://localhost:3002/api/game/ai-move
+Content-Type: application/json
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+{
+  "points": [
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 0, "black": 0},
+    {"white": 3, "black": 0},
+    {"white": 2, "black": 0},
+    {"white": 4, "black": 0},
+    {"white": 3, "black": 0},
+    {"white": 2, "black": 0},
+    {"white": 1, "black": 0}
+  ],
+  "bar": {"white": 0, "black": 0},
+  "off": {"white": 0, "black": 0},
+  "currentPlayer": "white",
+  "diceRoll": [5, 6],
+  "difficulty": "EXPERT"
+}

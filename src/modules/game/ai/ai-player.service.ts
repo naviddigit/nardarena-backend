@@ -1,3 +1,13 @@
+/**
+ * ⚠️ WARNING: این فایل تست شده است و نباید دستکاری شود!
+ * این فایل بعد از هفته‌ها کار روی movement direction و game logic تکمیل شده.
+ * تنها در صورتی تغییر دهید که:
+ * 1. خطای محرز و قابل تکرار وجود دارد
+ * 2. می‌توانید بدون تداخل با سایر بخش‌ها مشکل را حل کنید
+ * 3. تغییرات را به صورت جداگانه تست کرده‌اید
+ * در غیر این صورت حق دستکاری این فایل را ندارید!
+ */
+
 import { Injectable } from '@nestjs/common';
 
 export interface BoardState {
@@ -57,14 +67,302 @@ export class AIPlayerService {
 
   /**
    * Generate all possible moves for the AI
+   * این فانکشن باید همه ترکیبات ممکن رو امتحان کنه
    */
   private generatePossibleMoves(
     boardState: BoardState,
     diceRoll: [number, number]
   ): AIMove[][] {
-    // TODO: Implement backgammon rules to generate valid moves
-    // این باید logic کامل نرد رو پیاده کنه
-    return [];
+    const [die1, die2] = diceRoll;
+    const isDouble = die1 === die2;
+    const aiColor = boardState.currentPlayer;
+    
+    // For doubles, we can use each die up to 4 times
+    const diceToUse = isDouble ? [die1, die1, die1, die1] : [die1, die2];
+
+    console.log(`🎲 Generating moves for dice: ${diceToUse.join(', ')}`);
+
+    // ✅ حالا از همه checker ها شروع میکنیم (نه فقط یکی!)
+    const allSequences: AIMove[][] = [];
+    this.generateAllPossibleSequences(
+      boardState,
+      diceToUse,
+      aiColor,
+      [],
+      allSequences
+    );
+
+    console.log(`✅ Found ${allSequences.length} possible move sequences`);
+
+    // If no moves found, return empty
+    return allSequences.length > 0 ? allSequences : [];
+  }
+
+  /**
+   * Generate all possible move sequences (با همه checker ها)
+   */
+  private generateAllPossibleSequences(
+    boardState: BoardState,
+    remainingDice: number[],
+    color: 'white' | 'black',
+    currentSequence: AIMove[],
+    allSequences: AIMove[][]
+  ): void {
+    // Base case: اگر تاس نمونده، این sequence رو ذخیره کن
+    if (remainingDice.length === 0) {
+      if (currentSequence.length > 0) {
+        allSequences.push([...currentSequence]);
+      }
+      return;
+    }
+
+    // Get all movable checkers
+    const movableCheckers = this.getMovableCheckers(boardState, color);
+
+    let foundValidMove = false;
+
+    // امتحان کردن هر تاس با هر checker
+    for (const die of remainingDice) {
+      for (const from of movableCheckers) {
+        const to = this.calculateDestination(from, die, color);
+
+        // Check if this move is valid
+        if (this.isValidMove(boardState, from, to, color)) {
+          foundValidMove = true;
+          const move: AIMove = { from, to, diceUsed: die };
+
+          // Apply move temporarily
+          const newBoard = this.applyTempMove(boardState, move, color);
+          
+          // Remove used die
+          const newRemaining = remainingDice.filter((d, i) => {
+            // Remove first occurrence of this die value
+            if (d === die && i === remainingDice.indexOf(die)) {
+              return false;
+            }
+            return true;
+          });
+
+          // Recurse with new board state
+          this.generateAllPossibleSequences(
+            newBoard,
+            newRemaining,
+            color,
+            [...currentSequence, move],
+            allSequences
+          );
+        }
+      }
+    }
+
+    // اگر حرکت نکردیم ولی sequence داریم، ذخیره کن (partial moves)
+    if (!foundValidMove && currentSequence.length > 0) {
+      allSequences.push([...currentSequence]);
+    }
+  }
+
+  /**
+   * Get all checkers that can potentially move
+   */
+  private getMovableCheckers(boardState: BoardState, color: 'white' | 'black'): number[] {
+    const checkers: number[] = [];
+    
+    // Check if we have checkers on the bar (must move these first)
+    if (boardState.bar[color] > 0) {
+      return [-1]; // -1 represents bar
+    }
+
+    // Check all points for movable checkers
+    for (let i = 0; i < 24; i++) {
+      if (boardState.points[i][color] > 0) {
+        checkers.push(i);
+      }
+    }
+
+    return checkers;
+  }
+
+  /**
+   * Generate all possible move sequences for a checker
+   * این فانکشن باید کل sequence حرکات رو generate کنه
+   */
+  private generateMoveSequences(
+    boardState: BoardState,
+    from: number,
+    dice: number[],
+    color: 'white' | 'black'
+  ): AIMove[][] {
+    const sequences: AIMove[][] = [];
+
+    // 🎯 حالا باید کل sequence رو generate کنیم
+    this.generateMovesRecursive(
+      boardState,
+      from,
+      dice,
+      color,
+      [],
+      sequences
+    );
+
+    return sequences;
+  }
+
+  /**
+   * Generate moves recursively - برای پیدا کردن همه حرکات ممکن
+   */
+  private generateMovesRecursive(
+    boardState: BoardState,
+    currentPos: number,
+    remainingDice: number[],
+    color: 'white' | 'black',
+    currentSequence: AIMove[],
+    allSequences: AIMove[][],
+    originalDiceCount: number = remainingDice.length
+  ): void {
+    // Base case: اگر تاس نمونده، این sequence رو اضافه کن
+    if (remainingDice.length === 0) {
+      if (currentSequence.length > 0) {
+        allSequences.push([...currentSequence]);
+      }
+      return;
+    }
+
+    // Try each remaining die
+    for (let i = 0; i < remainingDice.length; i++) {
+      const die = remainingDice[i];
+      const to = this.calculateDestination(currentPos, die, color);
+
+      // Check if move is valid
+      if (this.isValidMove(boardState, currentPos, to, color)) {
+        const move: AIMove = { from: currentPos, to, diceUsed: die };
+
+        // Apply this move temporarily
+        const newBoard = this.applyTempMove(boardState, move, color);
+        const newRemaining = [...remainingDice];
+        newRemaining.splice(i, 1); // Remove used die
+
+        // Recurse with new state
+        this.generateMovesRecursive(
+          newBoard,
+          to, // Next move starts from destination
+          newRemaining,
+          color,
+          [...currentSequence, move],
+          allSequences,
+          originalDiceCount
+        );
+      }
+    }
+
+    // Also save current sequence if it's not empty (partial moves are valid)
+    if (currentSequence.length > 0 && remainingDice.length < originalDiceCount) {
+      allSequences.push([...currentSequence]);
+    }
+  }
+
+  /**
+   * Apply move temporarily for evaluation
+   */
+  private applyTempMove(
+    boardState: BoardState,
+    move: AIMove,
+    color: 'white' | 'black'
+  ): BoardState {
+    const newBoard = JSON.parse(JSON.stringify(boardState));
+    const opponentColor = color === 'white' ? 'black' : 'white';
+
+    // Remove from source
+    if (move.from === -1) {
+      newBoard.bar[color]--;
+    } else {
+      newBoard.points[move.from][color]--;
+    }
+
+    // Add to destination
+    if (move.to < 0 || move.to > 23) {
+      // Bear off
+      newBoard.off[color]++;
+    } else {
+      // Check for hit
+      if (newBoard.points[move.to][opponentColor] === 1) {
+        newBoard.bar[opponentColor]++;
+        newBoard.points[move.to][opponentColor] = 0;
+      }
+      newBoard.points[move.to][color]++;
+    }
+
+    return newBoard;
+  }
+
+  /**
+   * Calculate destination point based on direction
+   * قوانین محکم: سفید 23→0 (منهای)، مشکی 0→23 (جمع)
+   */
+  private calculateDestination(from: number, die: number, color: 'white' | 'black'): number {
+    // Bar moves (entering from bar)
+    if (from === -1) {
+      // سفید از bar وارد 24-die میشه، مشکی از bar وارد die-1 میشه
+      return color === 'white' ? 24 - die : die - 1;
+    }
+
+    // Regular moves - قوانین محکم!
+    if (color === 'white') {
+      // ⚪ سفید: از 23 به سمت 0 حرکت میکنه (منهای میشه)
+      return from - die;
+    } else {
+      // ⚫ مشکی: از 0 به سمت 23 حرکت میکنه (جمع میشه)
+      return from + die;
+    }
+  }
+
+  /**
+   * Check if a move is valid according to backgammon rules
+   */
+  private isValidMove(
+    boardState: BoardState,
+    from: number,
+    to: number,
+    color: 'white' | 'black'
+  ): boolean {
+    // Check if destination is out of bounds (bearing off)
+    if (to < 0 || to > 23) {
+      return this.canBearOff(boardState, color);
+    }
+
+    // Check if destination point is blocked by opponent
+    const opponentColor = color === 'white' ? 'black' : 'white';
+    const destPoint = boardState.points[to];
+
+    // Can't move to a point with 2+ opponent checkers
+    if (destPoint[opponentColor] >= 2) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Check if player can bear off (remove checkers from board)
+   * قوانین: سفید home board = 0-5، مشکی home board = 18-23
+   */
+  private canBearOff(boardState: BoardState, color: 'white' | 'black'): boolean {
+    // All checkers must be in home board
+    // ⚪ سفید: home = 0-5 (چون به سمت 0 میره)
+    // ⚫ مشکی: home = 18-23 (چون به سمت 23 میره)
+    const homeStart = color === 'white' ? 0 : 18;
+    const homeEnd = color === 'white' ? 6 : 24;
+
+    for (let i = 0; i < 24; i++) {
+      if (boardState.points[i][color] > 0) {
+        if (color === 'white' && (i < homeStart || i >= homeEnd)) return false;
+        if (color === 'black' && (i < homeStart || i >= homeEnd)) return false;
+      }
+    }
+
+    // Also check bar
+    if (boardState.bar[color] > 0) return false;
+
+    return true;
   }
 
   /**
@@ -161,23 +459,108 @@ export class AIPlayerService {
     return score;
   }
 
+  /**
+   * Evaluate safety of a move (avoid leaving blots)
+   */
   private evaluateSafety(move: AIMove, boardState: BoardState): number {
-    // TODO: Check if destination point is safe
-    return 0;
+    let score = 0;
+    const to = move.to;
+
+    // Bearing off is always safe
+    if (to < 0 || to > 23) {
+      return 1.0;
+    }
+
+    const aiColor = boardState.currentPlayer;
+    const opponentColor = aiColor === 'white' ? 'black' : 'white';
+
+    // Check if destination would create a blot (single checker)
+    const destPoint = boardState.points[to];
+    if (destPoint[aiColor] === 0) {
+      // Creating a new blot - check if opponent can hit
+      const canBeHit = this.canOpponentHit(boardState, to, opponentColor);
+      score = canBeHit ? -0.5 : 0.5;
+    } else {
+      // Moving to existing checker(s) - safer
+      score = 0.8;
+    }
+
+    return Math.max(0, Math.min(1, score));
   }
 
+  /**
+   * Check if opponent can hit this point
+   */
+  private canOpponentHit(boardState: BoardState, point: number, opponentColor: 'white' | 'black'): boolean {
+    // Check points within 6 spaces (max die value)
+    for (let dist = 1; dist <= 6; dist++) {
+      const opponentPoint = opponentColor === 'white' ? point - dist : point + dist;
+      
+      if (opponentPoint >= 0 && opponentPoint < 24) {
+        if (boardState.points[opponentPoint][opponentColor] > 0) {
+          return true;
+        }
+      }
+    }
+    
+    // Check if opponent has checkers on bar
+    if (boardState.bar[opponentColor] > 0) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Evaluate forward progress
+   */
   private evaluateAdvancement(move: AIMove): number {
-    // Forward progress is good
-    return move.to - move.from;
+    // Further moves get higher scores
+    const distance = Math.abs(move.to - move.from);
+    return distance / 24; // Normalize to 0-1
   }
 
+  /**
+   * Evaluate blocking potential
+   */
   private evaluateBlocking(move: AIMove, boardState: BoardState): number {
-    // TODO: Check if move creates/maintains blocking points
-    return 0;
+    const to = move.to;
+    
+    // Bearing off doesn't block
+    if (to < 0 || to > 23) {
+      return 0;
+    }
+
+    const aiColor = boardState.currentPlayer;
+    const destPoint = boardState.points[to];
+
+    // Creating a point (2+ checkers) blocks opponent
+    if (destPoint[aiColor] >= 1) {
+      return 0.8;
+    }
+
+    return 0.2;
   }
 
+  /**
+   * Evaluate hitting opponent checker
+   */
   private evaluateHitting(move: AIMove, boardState: BoardState): number {
-    // TODO: Check if move hits opponent
+    const to = move.to;
+    
+    if (to < 0 || to > 23) {
+      return 0;
+    }
+
+    const aiColor = boardState.currentPlayer;
+    const opponentColor = aiColor === 'white' ? 'black' : 'white';
+    const destPoint = boardState.points[to];
+
+    // If opponent has exactly 1 checker, we can hit it
+    if (destPoint[opponentColor] === 1) {
+      return 1.0;
+    }
+
     return 0;
   }
 

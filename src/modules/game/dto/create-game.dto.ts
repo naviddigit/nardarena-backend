@@ -11,6 +11,16 @@ export class CreateGameDto {
   gameType: 'AI' | 'ONLINE' | 'TOURNAMENT';
 
   @ApiProperty({ 
+    example: 'MEDIUM',
+    enum: ['EASY', 'MEDIUM', 'HARD', 'EXPERT'],
+    required: false,
+    description: 'AI difficulty level (only for AI games)'
+  })
+  @IsOptional()
+  @IsEnum(['EASY', 'MEDIUM', 'HARD', 'EXPERT'])
+  aiDifficulty?: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT';
+
+  @ApiProperty({ 
     example: 'uuid-of-black-player', 
     required: false,
     description: 'ID of opponent (for ONLINE games). For AI games, system will assign AI player.'

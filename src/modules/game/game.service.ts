@@ -1,18 +1,28 @@
+/**
+ * ⚠️ WARNING: بخش‌هایی از این فایل تست شده و critical هستند!
+ * لطفاً قبل از تغییر هر تابع، مستندات و کامنت‌های موجود را بخوانید.
+ * توابع applyMove و convert format ها critical هستند.
+ */
+
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { RecordMoveDto } from './dto/record-move.dto';
 import { EndGameDto } from './dto/end-game.dto';
+import { AIPlayerService, AIDifficulty } from './ai/ai-player.service';
 
 @Injectable()
 export class GameService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private aiPlayerService: AIPlayerService,
+  ) {}
 
   // AI Player ID (system user for AI games)
   private readonly AI_PLAYER_ID = '00000000-0000-0000-0000-000000000001';
 
   async createGame(userId: string, createGameDto: CreateGameDto) {
-    const { gameType, opponentId, timeControl = 120, gameMode = 'CLASSIC' } = createGameDto;
+    const { gameType, opponentId, timeControl = 120, gameMode = 'CLASSIC', aiDifficulty = 'MEDIUM' } = createGameDto;
 
     // Determine opponent based on game type
     let blackPlayerId: string;
@@ -29,13 +39,39 @@ export class GameService {
       throw new BadRequestException('Tournament games must be created through tournament system');
     }
 
-    // Create initial empty board state
+    // Create initial standard backgammon board state
     const initialBoardState = {
-      points: Array(24).fill({ white: 0, black: 0 }),
+      points: [
+        { white: 2, black: 0 },  // Point 0
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 0, black: 5 },  // Point 5
+        { white: 0, black: 0 },
+        { white: 0, black: 3 },
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 5, black: 0 },  // Point 11
+        { white: 5, black: 0 },  // Point 12
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 3, black: 0 },  // Point 16
+        { white: 0, black: 5 },
+        { white: 0, black: 0 },
+        { white: 0, black: 3 },
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 0, black: 0 },
+        { white: 0, black: 2 },  // Point 23
+      ],
       bar: { white: 0, black: 0 },
       off: { white: 0, black: 0 },
       currentPlayer: 'white',
       phase: 'opening',
+      aiDifficulty: gameType === 'AI' ? aiDifficulty : undefined,
     };
 
     const game = await this.prisma.game.create({
@@ -130,7 +166,26 @@ export class GameService {
       },
     });
 
-    return move;
+    // If this is an AI game and player just finished their turn, trigger AI move
+    const shouldTriggerAI = 
+      game.gameType === 'AI' && 
+      recordMoveDto.boardStateAfter && 
+      (recordMoveDto.boardStateAfter as any).currentPlayer === 'black';
+
+    if (shouldTriggerAI) {
+      console.log('🤖 AI\'s turn detected, triggering AI move...');
+      // Trigger AI move in background (non-blocking)
+      setImmediate(async () => {
+        try {
+          await this.makeAIMove(gameId);
+          console.log('✅ AI move completed');
+        } catch (error) {
+          console.error('❌ AI move failed:', error);
+        }
+      });
+    }
+
+    return { move };
   }
 
   async endGame(gameId: string, userId: string, endGameDto: EndGameDto) {
@@ -230,7 +285,10 @@ export class GameService {
           { whitePlayerId: userId },
           { blackPlayerId: userId },
         ],
-        status: 'COMPLETED',
+        // Include both ACTIVE and COMPLETED games
+        status: {
+          in: ['ACTIVE', 'COMPLETED'],
+        },
       },
       include: {
         whitePlayer: {
@@ -250,7 +308,12 @@ export class GameService {
           },
         },
       },
-      orderBy: { endedAt: 'desc' },
+      orderBy: [
+        // Active games first
+        { status: 'asc' },
+        // Then sort by updated/ended time
+        { updatedAt: 'desc' },
+      ],
       take: limit,
       skip: offset,
     });
@@ -261,7 +324,9 @@ export class GameService {
           { whitePlayerId: userId },
           { blackPlayerId: userId },
         ],
-        status: 'COMPLETED',
+        status: {
+          in: ['ACTIVE', 'COMPLETED'],
+        },
       },
     });
 
@@ -270,6 +335,234 @@ export class GameService {
       total,
       limit,
       offset,
+    };
+  }
+
+  /**
+   * Sync game state (for dice rolls, phase changes, etc.)
+   */
+  async syncGameState(gameId: string, userId: string, syncStateDto: any) {
+    // Verify game exists and user is a player
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    if (game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
+      throw new ForbiddenException('Not a player in this game');
+    }
+
+    // Merge dice values into game state
+    const updatedGameState = {
+      ...syncStateDto.gameState,
+      diceValues: syncStateDto.diceValues || [],
+    };
+
+    console.log('🔄 Syncing state with dice values:', syncStateDto.diceValues);
+
+    // Update game state
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        gameState: updatedGameState,
+        updatedAt: new Date(),
+      },
+    });
+
+    return { 
+      message: 'State synced successfully',
+      gameState: updatedGameState,
+    };
+  }
+
+  /**
+   * AI automatically makes its move
+   */
+  async makeAIMove(gameId: string) {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    if (game.gameType !== 'AI') {
+      throw new BadRequestException('This is not an AI game');
+    }
+
+    if (game.status !== 'ACTIVE') {
+      throw new BadRequestException('Game is not active');
+    }
+
+    const gameState = game.gameState as any;
+    
+    // Check if it's AI's turn (black player)
+    if (gameState.currentPlayer !== 'black') {
+      throw new BadRequestException('Not AI turn');
+    }
+
+    // Use dice values from synced state (already rolled by frontend)
+    let diceRoll: [number, number];
+    
+    if (gameState.diceValues && gameState.diceValues.length >= 2) {
+      // Use the dice that were already rolled
+      diceRoll = [gameState.diceValues[0], gameState.diceValues[1]];
+      console.log('🎲 Using synced dice values:', diceRoll);
+    } else {
+      // Fallback: Roll new dice if not provided
+      const dice1 = Math.floor(Math.random() * 6) + 1;
+      const dice2 = Math.floor(Math.random() * 6) + 1;
+      diceRoll = [dice1, dice2];
+      console.log('⚠️ No dice values in state, rolled new dice:', diceRoll);
+    }
+
+    // Get AI difficulty from game state
+    const difficulty = (gameState.aiDifficulty || 'MEDIUM') as AIDifficulty;
+
+    // Simulate thinking time
+    await this.aiPlayerService.simulateThinkingTime(difficulty);
+
+    // Convert frontend board state format to AI format
+    const boardState = this.convertToAIFormat(gameState);
+    console.log('🔄 Converted board state for AI:', JSON.stringify(boardState, null, 2));
+
+    const moves = await this.aiPlayerService.makeMove(boardState, diceRoll, difficulty);
+    console.log('🤖 AI calculated moves:', moves);
+
+    // Apply moves to board state (AI format)
+    let currentBoard = { ...boardState };
+    for (const move of moves) {
+      currentBoard = this.applyMove(currentBoard, move);
+    }
+
+    // Convert back to frontend format
+    const newGameState = this.convertFromAIFormat(currentBoard, gameState);
+    console.log('✅ Converted back to frontend format');
+
+    // Update game state in database
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        gameState: newGameState,
+        updatedAt: new Date(),
+      },
+    });
+
+    return {
+      moves,
+      diceRoll,
+      difficulty,
+      newGameState,
+    };
+  }
+
+  /**
+   * Apply a single move to board state (helper function)
+   */
+  private applyMove(boardState: any, move: { from: number; to: number }) {
+    const newBoard = JSON.parse(JSON.stringify(boardState));
+    const color = boardState.currentPlayer;
+    const opponentColor = color === 'white' ? 'black' : 'white';
+
+    // Move from bar
+    if (move.from === -1) {
+      newBoard.bar[color]--;
+      
+      // ✅ Check for hit at destination
+      const destPoint = newBoard.points[move.to];
+      if (destPoint[opponentColor] === 1) {
+        // Hit opponent checker
+        destPoint[opponentColor] = 0;
+        newBoard.bar[opponentColor]++;
+      }
+      
+      newBoard.points[move.to][color]++;
+    }
+    // Bear off
+    else if (move.to === -1 || move.to === 24) {
+      newBoard.points[move.from][color]--;
+      newBoard.off[color]++;
+    }
+    // Normal move
+    else {
+      newBoard.points[move.from][color]--;
+      
+      // ✅ Check for hit at destination
+      const destPoint = newBoard.points[move.to];
+      if (destPoint[opponentColor] === 1) {
+        // Hit opponent checker
+        destPoint[opponentColor] = 0;
+        newBoard.bar[opponentColor]++;
+      }
+      
+      newBoard.points[move.to][color]++;
+    }
+
+    return newBoard;
+  }
+
+  /**
+   * Convert frontend board state format to AI service format
+   */
+  private convertToAIFormat(gameState: any): any {
+    // Frontend format: points: Array<{ checkers: ['white', 'black', ...], count: number }>
+    // AI format: points: Array<{ white: number, black: number }>
+    
+    const aiPoints = gameState.points.map((point: any) => {
+      const whiteCount = point.checkers?.filter((c: string) => c === 'white').length || 0;
+      const blackCount = point.checkers?.filter((c: string) => c === 'black').length || 0;
+      
+      return {
+        white: whiteCount,
+        black: blackCount,
+      };
+    });
+
+    return {
+      points: aiPoints,
+      bar: gameState.bar || { white: 0, black: 0 },
+      off: gameState.off || { white: 0, black: 0 },
+      currentPlayer: 'black' as const,
+    };
+  }
+
+  /**
+   * Convert AI board state format back to frontend format
+   */
+  private convertFromAIFormat(aiBoard: any, originalGameState: any): any {
+    // AI format: points: Array<{ white: number, black: number }>
+    // Frontend format: points: Array<{ checkers: ['white', 'black', ...], count: number }>
+    
+    const frontendPoints = aiBoard.points.map((point: any) => {
+      const checkers: string[] = [];
+      
+      // Add white checkers
+      for (let i = 0; i < point.white; i++) {
+        checkers.push('white');
+      }
+      
+      // Add black checkers
+      for (let i = 0; i < point.black; i++) {
+        checkers.push('black');
+      }
+      
+      return {
+        checkers,
+        count: checkers.length,
+      };
+    });
+
+    return {
+      ...originalGameState,
+      points: frontendPoints,
+      bar: aiBoard.bar,
+      off: aiBoard.off,
+      currentPlayer: 'white', // AI finished, player's turn
+      diceValues: [], // Clear dice values
     };
   }
 
