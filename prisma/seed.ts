@@ -178,6 +178,80 @@ async function main() {
   // GAME SETTINGS
   // ==========================================
   const gameSettings = [
+    // Timing Settings
+    {
+      key: 'game.time_per_move',
+      value: '30',
+      description: 'Time limit per move (seconds)',
+      category: 'TIMING' as const,
+      dataType: 'NUMBER' as const,
+    },
+    {
+      key: 'game.total_time_per_game',
+      value: '1800',
+      description: 'Total time limit per game (seconds)',
+      category: 'TIMING' as const,
+      dataType: 'NUMBER' as const,
+    },
+    // Scoring Settings
+    {
+      key: 'game.points_per_win',
+      value: '1',
+      description: 'Points awarded per set win',
+      category: 'SCORING' as const,
+      dataType: 'NUMBER' as const,
+    },
+    {
+      key: 'game.double_enabled',
+      value: 'true',
+      description: 'Enable doubling cube feature',
+      category: 'SCORING' as const,
+      dataType: 'BOOLEAN' as const,
+    },
+    {
+      key: 'game.mars_enabled',
+      value: 'true',
+      description: 'Enable Mars (backgammon) scoring',
+      category: 'SCORING' as const,
+      dataType: 'BOOLEAN' as const,
+    },
+    {
+      key: 'game.mars_applies_on_doubled',
+      value: 'true',
+      description: 'Mars counts double in doubled games',
+      category: 'SCORING' as const,
+      dataType: 'BOOLEAN' as const,
+    },
+    // Rules Settings
+    {
+      key: 'game.allow_undo',
+      value: 'false',
+      description: 'Allow players to undo moves',
+      category: 'RULES' as const,
+      dataType: 'BOOLEAN' as const,
+    },
+    {
+      key: 'game.one_game_per_player',
+      value: 'true',
+      description: 'Limit to one active game per player',
+      category: 'RULES' as const,
+      dataType: 'BOOLEAN' as const,
+    },
+    {
+      key: 'game.max_board_requests',
+      value: '5',
+      description: 'Maximum pending game requests per player',
+      category: 'RULES' as const,
+      dataType: 'NUMBER' as const,
+    },
+    // Bets Settings
+    {
+      key: 'game.allowed_bet_amounts',
+      value: '[5,10,25,50,100,250,500]',
+      description: 'Allowed bet amounts (JSON array)',
+      category: 'BETS' as const,
+      dataType: 'JSON' as const,
+    },
     // AI Behavior
     {
       key: 'ai.move_delay_min',
