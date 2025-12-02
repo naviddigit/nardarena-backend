@@ -99,6 +99,69 @@ export class SettingsService {
     }));
   }
 
+  // ==========================================
+  // GAME SETTINGS
+  // ==========================================
+
+  /**
+   * Get all game settings
+   */
+  async getAllGameSettings() {
+    const settings = await this.prisma.gameSetting.findMany({
+      orderBy: [{ category: 'asc' }, { key: 'asc' }],
+    });
+
+    return settings;
+  }
+
+  /**
+   * Get game settings by category
+   */
+  async getGameSettingsByCategory(category: string) {
+    const settings = await this.prisma.gameSetting.findMany({
+      where: { category: category as any },
+      orderBy: { key: 'asc' },
+    });
+
+    return settings;
+  }
+
+  /**
+   * Get single game setting
+   */
+  async getGameSetting(key: string) {
+    return this.prisma.gameSetting.findUnique({
+      where: { key },
+    });
+  }
+
+  /**
+   * Update game setting
+   */
+  async updateGameSetting(key: string, value: string) {
+    return this.prisma.gameSetting.update({
+      where: { key },
+      data: { value },
+    });
+  }
+
+  /**
+   * Get AI move delay settings (for frontend)
+   */
+  async getAIMoveDelays() {
+    const minSetting = await this.prisma.gameSetting.findUnique({
+      where: { key: 'ai.move_delay_min' },
+    });
+    const maxSetting = await this.prisma.gameSetting.findUnique({
+      where: { key: 'ai.move_delay_max' },
+    });
+
+    return {
+      min: minSetting ? parseInt(minSetting.value, 10) : 1000,
+      max: maxSetting ? parseInt(maxSetting.value, 10) : 4000,
+    };
+  }
+
   /**
    * Get calculated fee example (read-only helper)
    */

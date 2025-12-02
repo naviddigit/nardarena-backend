@@ -174,6 +174,36 @@ async function main() {
   }
   console.log(`✅ Created ${systemSettings.length} system settings`);
 
+  // ==========================================
+  // GAME SETTINGS
+  // ==========================================
+  const gameSettings = [
+    // AI Behavior
+    {
+      key: 'ai.move_delay_min',
+      value: '1000',
+      description: 'Minimum delay (ms) between AI moves for human-like behavior',
+      category: 'AI' as const,
+      dataType: 'NUMBER' as const,
+    },
+    {
+      key: 'ai.move_delay_max',
+      value: '4000',
+      description: 'Maximum delay (ms) between AI moves for human-like behavior',
+      category: 'AI' as const,
+      dataType: 'NUMBER' as const,
+    },
+  ];
+
+  for (const setting of gameSettings) {
+    await prisma.gameSetting.upsert({
+      where: { key: setting.key },
+      update: {},
+      create: setting,
+    });
+  }
+  console.log(`✅ Created ${gameSettings.length} game settings`);
+
   console.log('🎉 Database seed completed!');
 }
 

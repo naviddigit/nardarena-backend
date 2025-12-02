@@ -105,6 +105,39 @@ model UserStats {
 }
 
 // ==========================================
+// GAME SETTINGS
+// ==========================================
+
+model GameSetting {
+  id          String                  @id @default(uuid())
+  key         String                  @unique
+  value       String
+  description String
+  category    GameSettingCategory
+  dataType    GameSettingDataType     @default(STRING)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  
+  @@index([category])
+  @@map("game_settings")
+}
+
+enum GameSettingCategory {
+  TIMING
+  SCORING
+  RULES
+  BETS
+  AI
+}
+
+enum GameSettingDataType {
+  STRING
+  NUMBER
+  BOOLEAN
+  JSON
+}
+
+// ==========================================
 // GAME MANAGEMENT
 // ==========================================
 
