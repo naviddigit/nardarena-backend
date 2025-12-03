@@ -41,15 +41,24 @@ export class GameService {
   async createGame(userId: string, createGameDto: CreateGameDto) {
     const { gameType, opponentId, timeControl = 120, gameMode = 'CLASSIC', aiDifficulty = 'MEDIUM', aiPlayerColor = 'black' } = createGameDto;
 
-    // Determine opponent based on game type
+    // ✅ Determine white and black players based on aiPlayerColor
+    let whitePlayerId: string;
     let blackPlayerId: string;
     
     if (gameType === 'AI') {
-      blackPlayerId = this.AI_PLAYER_ID;
+      // ✅ AI color determines player assignments
+      if (aiPlayerColor === 'white') {
+        whitePlayerId = this.AI_PLAYER_ID;  // AI plays white
+        blackPlayerId = userId;              // User plays black
+      } else {
+        whitePlayerId = userId;              // User plays white
+        blackPlayerId = this.AI_PLAYER_ID;   // AI plays black
+      }
     } else if (gameType === 'ONLINE') {
       if (!opponentId) {
         throw new BadRequestException('Opponent ID is required for ONLINE games');
       }
+      whitePlayerId = userId;
       blackPlayerId = opponentId;
     } else {
       // TOURNAMENT - will be handled in tournament module
