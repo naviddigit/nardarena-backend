@@ -128,15 +128,24 @@ export class GameController {
     return this.gameService.syncGameState(gameId, userId, syncStateDto);
   }
 
-  @Post('dice/roll')
-  @ApiOperation({ summary: 'Roll two dice (server-side for fairness)' })
+  @Patch(':id/state')
+  @ApiOperation({ summary: 'Update game state directly (for opening roll, etc.)' })
+  @ApiResponse({ status: 200, description: 'Game state updated successfully' })
+  @ApiResponse({ status: 404, description: 'Game not found' })
+  async updateGameState(
+    @Req() req: any,
+    @Param('id') gameId: string,
+    @Body() body: { gameState: any },
+  ) {
+    const userId = req.user.userId;
+    return this.gameService.updateGameState(gameId, userId, body.gameState);
+  }
+
+  @Post('dice/roll/:gameId')
+  @ApiOperation({ summary: 'Roll two dice (uses pre-generated dice from database to prevent cheating)' })
   @ApiResponse({ status: 200, description: 'Dice rolled successfully' })
-  rollDice() {
-    const dice = this.diceService.rollTwoDice();
-    return {
-      dice,
-      timestamp: new Date().toISOString(),
-    };
+  async rollDice(@Param('gameId') gameId: string) {
+    return this.gameService.rollDiceForGame(gameId);
   }
 
   @Post('dice/opening')
@@ -150,5 +159,21 @@ export class GameController {
       winner: result.white > result.black ? 'white' : 'black',
       timestamp: new Date().toISOString(),
     };
+  }
+
+  @Post(':id/end-turn')
+  @ApiOperation({ summary: 'End current player turn (Done button)' })
+  @ApiResponse({ status: 200, description: 'Turn ended successfully' })
+  async endTurn(@Req() req: any, @Param('id') gameId: string) {
+    const userId = req.user.userId;
+    return this.gameService.endTurn(gameId, userId);
+  }
+
+  @Get(':id/can-play')
+  @ApiOperation({ summary: 'Check if user can play (turn completed check)' })
+  @ApiResponse({ status: 200, description: 'Returns if user can play' })
+  async canPlay(@Req() req: any, @Param('id') gameId: string) {
+    const userId = req.user.userId;
+    return this.gameService.canUserPlay(gameId, userId);
   }
 }

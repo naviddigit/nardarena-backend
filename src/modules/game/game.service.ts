@@ -36,10 +36,21 @@ export class GameService {
   ) {}
 
   // AI Player ID (system user for AI games)
-  private readonly AI_PLAYER_ID = '00000000-0000-0000-0000-000000000001';
+  private readonly AI_PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // AI system player
+
+  /**
+   * 🎲 Generate random dice roll (1-6, 1-6)
+   * Used for pre-generating next player's dice to prevent refresh cheating
+   */
+  private generateRandomDice(): [number, number] {
+    return [
+      Math.floor(Math.random() * 6) + 1,
+      Math.floor(Math.random() * 6) + 1,
+    ];
+  }
 
   async createGame(userId: string, createGameDto: CreateGameDto) {
-    const { gameType, opponentId, timeControl = 120, gameMode = 'CLASSIC', aiDifficulty = 'MEDIUM', aiPlayerColor = 'black' } = createGameDto;
+    const { gameType, opponentId, timeControl = 1800, gameMode = 'CLASSIC', aiDifficulty = 'MEDIUM', aiPlayerColor = 'black' } = createGameDto;
 
     // ✅ Determine white and black players based on aiPlayerColor
     let whitePlayerId: string;
@@ -66,37 +77,60 @@ export class GameService {
     }
 
     // Create initial standard backgammon board state
+    // ✅ Using FRONTEND format: {checkers: ['white', 'white'], count: 2}
+    // This way NO conversion is needed!
     const initialBoardState = {
+      // Board arrangement
       points: [
-        { white: 2, black: 0 },  // Point 0
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 0, black: 5 },  // Point 5
-        { white: 0, black: 0 },
-        { white: 0, black: 3 },
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 5, black: 0 },  // Point 11
-        { white: 5, black: 0 },  // Point 12
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 3, black: 0 },  // Point 16
-        { white: 0, black: 5 },
-        { white: 0, black: 0 },
-        { white: 0, black: 3 },
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 0, black: 0 },
-        { white: 0, black: 2 },  // Point 23
+        { checkers: ['black', 'black'], count: 2 },  // Point 0 - Black home (2 black)
+        { checkers: [], count: 0 },  // Point 1
+        { checkers: [], count: 0 },  // Point 2
+        { checkers: [], count: 0 },  // Point 3
+        { checkers: [], count: 0 },  // Point 4
+        { checkers: ['white', 'white', 'white', 'white', 'white'], count: 5 },  // Point 5 - White (5 white)
+        { checkers: [], count: 0 },  // Point 6
+        { checkers: ['white', 'white', 'white'], count: 3 },  // Point 7 - White (3 white)
+        { checkers: [], count: 0 },  // Point 8
+        { checkers: [], count: 0 },  // Point 9
+        { checkers: [], count: 0 },  // Point 10
+        { checkers: ['black', 'black', 'black', 'black', 'black'], count: 5 },  // Point 11 - Black (5 black)
+        { checkers: ['white', 'white', 'white', 'white', 'white'], count: 5 },  // Point 12 - White (5 white)
+        { checkers: [], count: 0 },  // Point 13
+        { checkers: [], count: 0 },  // Point 14
+        { checkers: [], count: 0 },  // Point 15
+        { checkers: ['black', 'black', 'black'], count: 3 },  // Point 16 - Black (3 black)
+        { checkers: [], count: 0 },  // Point 17
+        { checkers: ['black', 'black', 'black', 'black', 'black'], count: 5 },  // Point 18 - Black (5 black)
+        { checkers: [], count: 0 },  // Point 19
+        { checkers: [], count: 0 },  // Point 20
+        { checkers: [], count: 0 },  // Point 21
+        { checkers: [], count: 0 },  // Point 22
+        { checkers: ['white', 'white'], count: 2 },  // Point 23 - White home (2 white)
       ],
       bar: { white: 0, black: 0 },
       off: { white: 0, black: 0 },
+      
+      // Turn management
       currentPlayer: 'white',
       phase: 'opening',
+      
+      // Dice management
+      diceValues: [],
+      nextDiceRoll: null, // Pre-generated dice for next turn (anti-cheat)
+      currentTurnDice: null, // Current turn's dice (for refresh persistence)
+      
+      // Turn control - WHO pressed Done LAST?
+      lastDoneBy: null, // 'white' | 'black' | null
+      lastDoneAt: null, // timestamp when Done was pressed
+      turnCompleted: false, // Has current player pressed Done?
+      
+      // Timer tracking
+      remainingTime: {
+        white: timeControl, // in seconds
+        black: timeControl, // in seconds
+      },
+      
+      // Game metadata
       aiDifficulty: gameType === 'AI' ? aiDifficulty : undefined,
       aiPlayerColor: gameType === 'AI' ? aiPlayerColor : undefined,
     };
@@ -182,15 +216,35 @@ export class GameService {
       timestamp: new Date().toISOString(),
     };
 
+    // 🎲 Generate next dice roll for the NEXT player (anti-cheat)
+    const nextDiceRoll = this.generateRandomDice();
+    console.log('🎲 Pre-generating dice for next turn:', nextDiceRoll);
+
+    // Update boardStateAfter to include the pre-generated dice
+    const updatedBoardState = recordMoveDto.boardStateAfter 
+      ? { 
+          ...(recordMoveDto.boardStateAfter as any), 
+          nextDiceRoll,
+        }
+      : game.gameState;
+
     await this.prisma.game.update({
       where: { id: gameId },
       data: {
         moveHistory: {
           push: moveData,
         },
-        gameState: recordMoveDto.boardStateAfter || game.gameState,
+        gameState: updatedBoardState,
         updatedAt: new Date(),
       },
+    });
+    
+    console.log('✅ Move recorded:', {
+      moveNumber: recordMoveDto.moveNumber,
+      from: recordMoveDto.from,
+      to: recordMoveDto.to,
+      gameStateUpdated: !!recordMoveDto.boardStateAfter,
+      nextDiceRoll, // Log the pre-generated dice
     });
 
     // If this is an AI game and player just finished their turn, trigger AI move
@@ -265,6 +319,207 @@ export class GameService {
     }
 
     return updatedGame;
+  }
+
+  /**
+   * 🎲 Roll dice for a game
+   * ⚠️ IMPORTANT: This only RETURNS dice, does NOT save to database!
+   * Database is only updated when Done button is pressed (endTurn)
+   */
+  async rollDiceForGame(gameId: string) {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    const gameState = game.gameState as any;
+
+    // If turn not completed and dice exist, return SAME dice
+    if (gameState.turnCompleted === false && gameState.currentTurnDice && Array.isArray(gameState.currentTurnDice)) {
+      console.log('🔒 Turn not completed! Returning SAME dice:', gameState.currentTurnDice);
+      
+      return {
+        dice: gameState.currentTurnDice,
+        source: 'current-turn',
+        timestamp: new Date().toISOString(),
+        message: 'You must complete your turn (press Done) before rolling again',
+      };
+    }
+
+    // Check if we have pre-generated dice
+    if (gameState.nextDiceRoll && Array.isArray(gameState.nextDiceRoll) && gameState.nextDiceRoll.length === 2) {
+      console.log('🎲 Using pre-generated dice:', gameState.nextDiceRoll);
+      
+      // ⚠️ DON'T SAVE TO DATABASE HERE!
+      // Just return the dice - frontend will use them
+      // Database will be saved when Done button is pressed
+      
+      return {
+        dice: gameState.nextDiceRoll,
+        source: 'pre-generated',
+        timestamp: new Date().toISOString(),
+        message: 'Dice rolled - press Done to save',
+      };
+    } else {
+      // Fallback: Generate new dice (for opening phase or first turn)
+      const dice = this.generateRandomDice();
+      console.log('🎲 No pre-generated dice, generating new:', dice);
+
+      return {
+        dice,
+        source: 'generated',
+        timestamp: new Date().toISOString(),
+        message: 'Dice rolled - press Done to save',
+      };
+    }
+  }
+
+  /**
+   * ✅ End Turn (Done button pressed)
+   * - Mark turn as completed
+   * - Switch currentPlayer
+   * - Generate dice for next turn
+   */
+  async endTurn(gameId: string, userId: string) {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    // Verify user is a player
+    if (game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
+      throw new ForbiddenException('Not a player in this game');
+    }
+
+    const gameState = game.gameState as any;
+    const currentPlayer = gameState.currentPlayer;
+
+    // Verify it's this player's turn
+    const isWhitePlayer = game.whitePlayerId === userId;
+    const playerColor = isWhitePlayer ? 'white' : 'black';
+    
+    if (currentPlayer !== playerColor) {
+      throw new BadRequestException('Not your turn');
+    }
+
+    console.log(`✅ ${playerColor} pressed Done - ending turn`);
+
+    // Switch player
+    const nextPlayer = currentPlayer === 'white' ? 'black' : 'white';
+    
+    // Generate dice for next turn
+    const nextDiceRoll = this.generateRandomDice();
+    console.log('🎲 Pre-generating dice for next turn:', nextDiceRoll);
+
+    const updatedGameState = {
+      ...gameState,
+      currentPlayer: nextPlayer,
+      
+      // ✅ Track WHO pressed Done and WHEN
+      lastDoneBy: playerColor,
+      lastDoneAt: new Date().toISOString(),
+      turnCompleted: true, // ✅ Mark as completed
+      
+      phase: 'waiting', // Back to waiting for next roll
+      diceValues: [], // Clear current dice
+      currentTurnDice: null, // Clear current turn dice
+      nextDiceRoll, // Store pre-generated dice
+    };
+
+    const updatedGame = await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        gameState: updatedGameState,
+        updatedAt: new Date(),
+      },
+      include: {
+        whitePlayer: true,
+        blackPlayer: true,
+        moves: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    return {
+      message: 'Turn ended successfully',
+      nextPlayer,
+      nextDiceRoll, // Return for debugging (won't be shown to players)
+      game: {
+        id: updatedGame.id,
+        gameState: updatedGame.gameState,
+        status: updatedGame.status,
+      },
+    };
+  }
+
+  /**
+   * ✅ Check if user can play
+   * Returns: can they roll dice? or is it opponent's turn and they haven't finished?
+   */
+  async canUserPlay(gameId: string, userId: string) {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    // Verify user is a player
+    if (game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
+      throw new ForbiddenException('Not a player in this game');
+    }
+
+    const gameState = game.gameState as any;
+    const currentPlayer = gameState.currentPlayer;
+    const turnCompleted = gameState.turnCompleted !== false; // Default true if not set
+    
+    // Determine user's color
+    const isWhitePlayer = game.whitePlayerId === userId;
+    const playerColor = isWhitePlayer ? 'white' : 'black';
+    
+    // Check if it's user's turn
+    const isUserTurn = currentPlayer === playerColor;
+    
+    // ✅ CRITICAL LOGIC:
+    // - canPlay = TRUE if it's your turn (whether completed or not!)
+    // - canRollNewDice = TRUE only if it's your turn AND previous turn completed
+    // - If turnCompleted = false, you can CONTINUE playing but can't roll NEW dice
+    
+    const canPlay = isUserTurn; // ✅ Can play if it's your turn
+    const canRollNewDice = isUserTurn && turnCompleted; // ✅ Can roll NEW dice only if Done was pressed
+    
+    // ✅ Enhanced response with lastDoneBy info
+    return {
+      canPlay, // ✅ Can interact with board
+      canRollNewDice, // ✅ Can request new dice (not restore old ones)
+      isYourTurn: isUserTurn,
+      turnCompleted,
+      currentPlayer,
+      playerColor,
+      phase: gameState.phase || 'waiting',
+      
+      // ✅ NEW: Who pressed Done last?
+      lastDoneBy: gameState.lastDoneBy || null,
+      lastDoneAt: gameState.lastDoneAt || null,
+      
+      // ✅ Dice info
+      currentTurnDice: gameState.currentTurnDice || null,
+      nextDiceRoll: gameState.nextDiceRoll || null,
+      
+      message: !isUserTurn 
+        ? `It's ${currentPlayer}'s turn${!turnCompleted ? ' (they haven\'t finished yet)' : ''}`
+        : !turnCompleted
+          ? 'Continue your turn (restore dice from refresh)'
+          : 'Your turn - you can roll dice',
+    };
   }
 
   async getGame(gameId: string, userId: string) {
@@ -404,6 +659,55 @@ export class GameService {
   }
 
   /**
+   * Update game state directly (for opening roll, phase changes, etc.)
+   */
+  async updateGameState(gameId: string, userId: string, newGameState: any) {
+    // Verify game exists and user is a player
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    if (game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
+      throw new ForbiddenException('Not a player in this game');
+    }
+
+    // Update game state without creating a move
+    const updatedGame = await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        gameState: newGameState,
+        updatedAt: new Date(),
+      },
+      include: {
+        whitePlayer: true,
+        blackPlayer: true,
+        moves: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    console.log('✅ Game state updated (no move created)');
+
+    return {
+      id: updatedGame.id,
+      whitePlayerId: updatedGame.whitePlayerId,
+      blackPlayerId: updatedGame.blackPlayerId,
+      gameType: updatedGame.gameType,
+      status: updatedGame.status,
+      gameState: updatedGame.gameState,
+      timeControl: updatedGame.timeControl,
+      moves: updatedGame.moves,
+      createdAt: updatedGame.createdAt,
+      updatedAt: updatedGame.updatedAt,
+    };
+  }
+
+  /**
    * AI automatically makes its move
    */
   async makeAIMove(gameId: string) {
@@ -426,11 +730,19 @@ export class GameService {
     const gameState = game.gameState as any;
     
     // Get AI player color from game state (default to black for backward compatibility)
-    const aiColor = gameState.aiPlayerColor || 'black';
+    const aiColor = (gameState.aiPlayerColor || 'black').toLowerCase();
+    const currentPlayer = (gameState.currentPlayer || 'white').toLowerCase();
     
-    // Check if it's AI's turn
-    if (gameState.currentPlayer !== aiColor) {
-      throw new BadRequestException('Not AI turn');
+    console.log('🔍 Checking AI turn:', {
+      currentPlayer,
+      aiColor,
+      rawAiColor: gameState.aiPlayerColor,
+      rawCurrentPlayer: gameState.currentPlayer,
+    });
+    
+    // Check if it's AI's turn (case-insensitive)
+    if (currentPlayer !== aiColor) {
+      throw new BadRequestException(`Not AI turn - current: ${currentPlayer}, AI: ${aiColor}`);
     }
 
     // Use dice values from synced state (already rolled by frontend)
@@ -439,11 +751,17 @@ export class GameService {
     if (gameState.diceValues && gameState.diceValues.length >= 2) {
       // Use the dice that were already rolled
       diceRoll = [gameState.diceValues[0], gameState.diceValues[1]];
+      console.log('🎲 Using existing dice:', diceRoll);
     } else {
-      // Fallback: Roll new dice if not provided
+      // Roll new dice if not provided (e.g., after resume)
       const dice1 = Math.floor(Math.random() * 6) + 1;
       const dice2 = Math.floor(Math.random() * 6) + 1;
       diceRoll = [dice1, dice2];
+      console.log('🎲 Rolling new dice for AI:', diceRoll);
+      
+      // Update game state with new dice
+      gameState.diceValues = diceRoll;
+      gameState.phase = 'moving';
     }
 
     // Get AI difficulty from game state
@@ -473,6 +791,11 @@ export class GameService {
     newGameState.currentPlayer = humanPlayerColor;
     newGameState.diceValues = [];
     newGameState.phase = 'waiting';
+
+    // 🎲 Generate next dice roll for human player (anti-cheat)
+    const nextDiceRoll = this.generateRandomDice();
+    newGameState.nextDiceRoll = nextDiceRoll;
+    console.log('🎲 Pre-generating dice for human player:', nextDiceRoll);
 
     // Update game state in database
     await this.prisma.game.update({
