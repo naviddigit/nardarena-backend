@@ -103,7 +103,7 @@ export class GameService {
 
     const game = await this.prisma.game.create({
       data: {
-        whitePlayerId: userId,
+        whitePlayerId,
         blackPlayerId,
         gameType,
         gameMode,
