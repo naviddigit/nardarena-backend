@@ -421,8 +421,14 @@ export class GameService {
     // Get AI player color from game state (default to black for backward compatibility)
     const aiColor = gameState.aiPlayerColor || 'black';
     
+    console.log('🔍 AI Move Check:');
+    console.log('  - AI Color:', aiColor);
+    console.log('  - Current Player:', gameState.currentPlayer);
+    console.log('  - aiPlayerColor in state:', gameState.aiPlayerColor);
+    
     // Check if it's AI's turn
     if (gameState.currentPlayer !== aiColor) {
+      console.error('❌ Not AI turn! currentPlayer:', gameState.currentPlayer, 'aiColor:', aiColor);
       throw new BadRequestException('Not AI turn');
     }
 
