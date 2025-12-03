@@ -490,6 +490,14 @@ export class GameService {
     const color = boardState.currentPlayer;
     const opponentColor = color === 'white' ? 'black' : 'white';
 
+    // ✅ Ensure bar and off objects exist (prevent undefined errors)
+    if (!newBoard.bar) {
+      newBoard.bar = { white: 0, black: 0 };
+    }
+    if (!newBoard.off) {
+      newBoard.off = { white: 0, black: 0 };
+    }
+
     // Move from bar
     if (move.from === -1) {
       newBoard.bar[color]--;
