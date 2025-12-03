@@ -1,8 +1,25 @@
 /**
- * ⚠️ WARNING: بخش‌هایی از این فایل تست شده و critical هستند!
- * لطفاً قبل از تغییر هر تابع، مستندات و کامنت‌های موجود را بخوانید.
- * توابع applyMove و convert format ها critical هستند.
+ * ⛔⛔⛔ CRITICAL - DO NOT MODIFY WITHOUT EXPLICIT PERMISSION! ⛔⛔⛔
+ * 
+ * Game Service - Core game logic and state management
+ * 
+ * LOCKED COMPONENTS:
+ * - applyMove() - Hit logic, board manipulation
+ * - validateMove() - Movement rules
+ * - rollDice() - Dice generation
+ * - Game state conversion and board format handling
+ * 
+ * This file has been tested extensively for:
+ * - Hit detection and bar placement
+ * - Legal move validation
+ * - Board state consistency
+ * - Move history tracking
+ * 
+ * ⚠️ Modifying these functions will break game mechanics!
+ * 
+ * Last stable: Dec 2, 2025
  */
+
 
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
