@@ -6,6 +6,32 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Starting database seed...');
 
+  // Create Guest user for non-authenticated play
+  const guestUser = await prisma.user.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000000' },
+    update: {},
+    create: {
+      id: '00000000-0000-0000-0000-000000000000',
+      email: 'guest@nardarena.com',
+      username: 'Guest',
+      displayName: 'Guest Player',
+      passwordHash: await bcrypt.hash('GUEST_NO_LOGIN', 12),
+      avatar: '/assets/images/avatar/guest-avatar.webp',
+      role: 'USER',
+      status: 'ACTIVE',
+      emailVerified: false,
+      stats: {
+        create: {
+          balance: 0,
+          gamesPlayed: 0,
+          gamesWon: 0,
+          gamesLost: 0,
+        },
+      },
+    },
+  });
+  console.log('✅ Guest user created:', guestUser.username);
+
   // Create AI system user
   const aiUser = await prisma.user.upsert({
     where: { id: '00000000-0000-0000-0000-000000000001' },

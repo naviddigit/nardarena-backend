@@ -379,8 +379,6 @@ export class GameService {
       diceValues: syncStateDto.diceValues || [],
     };
 
-    console.log('🔄 Syncing state with dice values:', syncStateDto.diceValues);
-
     // Update game state
     await this.prisma.game.update({
       where: { id: gameId },
@@ -421,14 +419,8 @@ export class GameService {
     // Get AI player color from game state (default to black for backward compatibility)
     const aiColor = gameState.aiPlayerColor || 'black';
     
-    console.log('🔍 AI Move Check:');
-    console.log('  - AI Color:', aiColor);
-    console.log('  - Current Player:', gameState.currentPlayer);
-    console.log('  - aiPlayerColor in state:', gameState.aiPlayerColor);
-    
     // Check if it's AI's turn
     if (gameState.currentPlayer !== aiColor) {
-      console.error('❌ Not AI turn! currentPlayer:', gameState.currentPlayer, 'aiColor:', aiColor);
       throw new BadRequestException('Not AI turn');
     }
 
@@ -438,13 +430,11 @@ export class GameService {
     if (gameState.diceValues && gameState.diceValues.length >= 2) {
       // Use the dice that were already rolled
       diceRoll = [gameState.diceValues[0], gameState.diceValues[1]];
-      console.log('🎲 Using synced dice values:', diceRoll);
     } else {
       // Fallback: Roll new dice if not provided
       const dice1 = Math.floor(Math.random() * 6) + 1;
       const dice2 = Math.floor(Math.random() * 6) + 1;
       diceRoll = [dice1, dice2];
-      console.log('⚠️ No dice values in state, rolled new dice:', diceRoll);
     }
 
     // Get AI difficulty from game state
@@ -468,7 +458,12 @@ export class GameService {
 
     // Convert back to frontend format
     const newGameState = this.convertFromAIFormat(currentBoard, gameState);
-    console.log('✅ Converted back to frontend format');
+    
+    // ✅ Switch turn to human player after AI moves
+    const humanPlayerColor = aiColor === 'white' ? 'black' : 'white';
+    newGameState.currentPlayer = humanPlayerColor;
+    newGameState.diceValues = [];
+    newGameState.phase = 'waiting';
 
     // Update game state in database
     await this.prisma.game.update({
