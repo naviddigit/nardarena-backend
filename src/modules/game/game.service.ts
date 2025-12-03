@@ -791,6 +791,11 @@ export class GameService {
     newGameState.currentPlayer = humanPlayerColor;
     newGameState.diceValues = [];
     newGameState.phase = 'waiting';
+    
+    // ✅ Mark turn as completed (AI finished its turn)
+    newGameState.turnCompleted = true;
+    newGameState.lastDoneBy = aiColor;
+    newGameState.lastDoneAt = new Date().toISOString();
 
     // 🎲 Generate next dice roll for human player (anti-cheat)
     const nextDiceRoll = this.generateRandomDice();
