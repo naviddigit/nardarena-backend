@@ -547,7 +547,7 @@ export class GameService {
       points: aiPoints,
       bar: gameState.bar || { white: 0, black: 0 },
       off: gameState.off || { white: 0, black: 0 },
-      currentPlayer: 'black' as const,
+      currentPlayer: gameState.currentPlayer || 'black',
     };
   }
 
