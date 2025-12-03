@@ -39,7 +39,7 @@ export class GameService {
   private readonly AI_PLAYER_ID = '00000000-0000-0000-0000-000000000001';
 
   async createGame(userId: string, createGameDto: CreateGameDto) {
-    const { gameType, opponentId, timeControl = 120, gameMode = 'CLASSIC', aiDifficulty = 'MEDIUM' } = createGameDto;
+    const { gameType, opponentId, timeControl = 120, gameMode = 'CLASSIC', aiDifficulty = 'MEDIUM', aiPlayerColor = 'black' } = createGameDto;
 
     // Determine opponent based on game type
     let blackPlayerId: string;
@@ -89,6 +89,7 @@ export class GameService {
       currentPlayer: 'white',
       phase: 'opening',
       aiDifficulty: gameType === 'AI' ? aiDifficulty : undefined,
+      aiPlayerColor: gameType === 'AI' ? aiPlayerColor : undefined,
     };
 
     const game = await this.prisma.game.create({
@@ -417,8 +418,11 @@ export class GameService {
 
     const gameState = game.gameState as any;
     
-    // Check if it's AI's turn (black player)
-    if (gameState.currentPlayer !== 'black') {
+    // Get AI player color from game state (default to black for backward compatibility)
+    const aiColor = gameState.aiPlayerColor || 'black';
+    
+    // Check if it's AI's turn
+    if (gameState.currentPlayer !== aiColor) {
       throw new BadRequestException('Not AI turn');
     }
 

@@ -21,6 +21,16 @@ export class CreateGameDto {
   aiDifficulty?: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT';
 
   @ApiProperty({ 
+    example: 'black',
+    enum: ['white', 'black'],
+    required: false,
+    description: 'AI player color (only for AI games). Defaults to black if not provided.'
+  })
+  @IsOptional()
+  @IsEnum(['white', 'black'])
+  aiPlayerColor?: 'white' | 'black';
+
+  @ApiProperty({ 
     example: 'uuid-of-black-player', 
     required: false,
     description: 'ID of opponent (for ONLINE games). For AI games, system will assign AI player.'
