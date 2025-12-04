@@ -68,6 +68,35 @@ export class GameController {
     return this.gameService.getGame(gameId, userId);
   }
 
+  @Get('stats')
+  @ApiOperation({ summary: 'Get user game statistics' })
+  @ApiResponse({ status: 200, description: 'Statistics retrieved' })
+  async getUserStats(@Req() req: any) {
+    const userId = req.user.userId;
+    return this.gameService.getUserStats(userId);
+  }
+
+  @Get('stats/monthly/current')
+  @ApiOperation({ summary: 'Get current month statistics' })
+  @ApiResponse({ status: 200, description: 'Monthly statistics retrieved' })
+  async getCurrentMonthStats(@Req() req: any) {
+    const userId = req.user.userId;
+    const now = new Date();
+    return this.gameService.getMonthlyStats(userId, now.getFullYear(), now.getMonth() + 1);
+  }
+
+  @Get('stats/monthly/:year/:month')
+  @ApiOperation({ summary: 'Get specific month statistics' })
+  @ApiResponse({ status: 200, description: 'Monthly statistics retrieved' })
+  async getMonthlyStats(
+    @Req() req: any,
+    @Param('year') year: string,
+    @Param('month') month: string,
+  ) {
+    const userId = req.user.userId;
+    return this.gameService.getMonthlyStats(userId, parseInt(year), parseInt(month));
+  }
+
   @Get('history/me')
   @ApiOperation({ summary: 'Get user game history' })
   @ApiResponse({ status: 200, description: 'Game history retrieved' })
