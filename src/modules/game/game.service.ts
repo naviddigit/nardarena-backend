@@ -325,6 +325,7 @@ export class GameService {
    * 🎲 Roll dice for a game
    * ⚠️ IMPORTANT: This only RETURNS dice, does NOT save to database!
    * Database is only updated when Done button is pressed (endTurn)
+   * ⏱️ NEW: Also sets turnStartTime for timer tracking
    */
   async rollDiceForGame(gameId: string) {
     const game = await this.prisma.game.findUnique({
@@ -345,36 +346,54 @@ export class GameService {
         dice: gameState.currentTurnDice,
         source: 'current-turn',
         timestamp: new Date().toISOString(),
+        turnStartTime: gameState.turnStartTime, // Return existing start time
         message: 'You must complete your turn (press Done) before rolling again',
       };
     }
 
     // Check if we have pre-generated dice
+    let diceToUse: number[];
+    let source: string;
+    
     if (gameState.nextDiceRoll && Array.isArray(gameState.nextDiceRoll) && gameState.nextDiceRoll.length === 2) {
       console.log('🎲 Using pre-generated dice:', gameState.nextDiceRoll);
-      
-      // ⚠️ DON'T SAVE TO DATABASE HERE!
-      // Just return the dice - frontend will use them
-      // Database will be saved when Done button is pressed
-      
-      return {
-        dice: gameState.nextDiceRoll,
-        source: 'pre-generated',
-        timestamp: new Date().toISOString(),
-        message: 'Dice rolled - press Done to save',
-      };
+      diceToUse = gameState.nextDiceRoll;
+      source = 'pre-generated';
     } else {
       // Fallback: Generate new dice (for opening phase or first turn)
-      const dice = this.generateRandomDice();
-      console.log('🎲 No pre-generated dice, generating new:', dice);
-
-      return {
-        dice,
-        source: 'generated',
-        timestamp: new Date().toISOString(),
-        message: 'Dice rolled - press Done to save',
-      };
+      diceToUse = this.generateRandomDice();
+      console.log('🎲 No pre-generated dice, generating new:', diceToUse);
+      source = 'generated';
     }
+    
+    // ⏱️ Record turn start time for timer calculation
+    const turnStartTime = new Date().toISOString();
+    
+    // ⚠️ Save turnStartTime to database immediately (for timer tracking)
+    const updatedGameState = {
+      ...gameState,
+      turnStartTime, // ✅ Track when this turn started
+      currentTurnDice: diceToUse, // Save current dice
+      turnCompleted: false, // Mark as in-progress
+    };
+    
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        gameState: updatedGameState,
+        updatedAt: new Date(),
+      },
+    });
+    
+    console.log('⏱️ Turn started at:', turnStartTime);
+
+    return {
+      dice: diceToUse,
+      source,
+      timestamp: turnStartTime,
+      turnStartTime, // ✅ Return for frontend timer sync
+      message: 'Dice rolled - press Done to save',
+    };
   }
 
   /**
@@ -410,6 +429,24 @@ export class GameService {
 
     console.log(`✅ ${playerColor} pressed Done - ending turn`);
 
+    // ⏱️ Calculate time spent on this turn
+    let timeSpentSeconds = 0;
+    if (gameState.turnStartTime) {
+      const turnStartTime = new Date(gameState.turnStartTime).getTime();
+      const now = Date.now();
+      timeSpentSeconds = Math.floor((now - turnStartTime) / 1000);
+      console.log(`⏱️ ${playerColor} spent ${timeSpentSeconds} seconds on this turn`);
+    }
+    
+    // ⏱️ Update remaining time for current player
+    const currentRemainingTime = gameState.remainingTime || { white: game.timeControl, black: game.timeControl };
+    const updatedRemainingTime = {
+      ...currentRemainingTime,
+      [playerColor]: Math.max(0, (currentRemainingTime[playerColor] || game.timeControl) - timeSpentSeconds),
+    };
+    
+    console.log(`⏱️ ${playerColor} has ${updatedRemainingTime[playerColor]} seconds remaining`);
+
     // Switch player
     const nextPlayer = currentPlayer === 'white' ? 'black' : 'white';
     
@@ -420,6 +457,10 @@ export class GameService {
     const updatedGameState = {
       ...gameState,
       currentPlayer: nextPlayer,
+      
+      // ⏱️ Update remaining time
+      remainingTime: updatedRemainingTime,
+      turnStartTime: null, // Clear turn start time
       
       // ✅ Track WHO pressed Done and WHEN
       lastDoneBy: playerColor,
