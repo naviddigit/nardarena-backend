@@ -9,6 +9,7 @@ import { GamesModule } from './modules/games/games.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { BotUserModule } from './modules/bot-user/bot-user.module';
 import { HealthController } from './common/controllers/health.controller';
 
 @Module({
@@ -40,6 +41,7 @@ import { HealthController } from './common/controllers/health.controller';
     AdminModule,
     WalletModule,
     SettingsModule,
+    BotUserModule,
   ],
   controllers: [HealthController],
 })

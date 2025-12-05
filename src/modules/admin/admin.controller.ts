@@ -21,6 +21,12 @@ export class AdminController {
     return this.adminService.getStats();
   }
 
+  @Get('users/by-country')
+  @ApiOperation({ summary: 'Get real users count by country' })
+  async getUsersByCountry() {
+    return this.adminService.getUsersByCountry();
+  }
+
   @Get('users')
   @ApiOperation({ summary: 'Get all users (paginated with search and sorting)' })
   async getUsers(
@@ -29,6 +35,7 @@ export class AdminController {
     @Query('search') search?: string,
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+    @Query('country') country?: string,
   ) {
     return this.adminService.getUsers(
       Number(page) || 1,
@@ -36,6 +43,7 @@ export class AdminController {
       search,
       sortBy,
       sortOrder || 'desc',
+      country,
     );
   }
 

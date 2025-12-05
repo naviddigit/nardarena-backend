@@ -123,21 +123,4 @@ export function generateSalt(): string {
   return crypto.randomBytes(SALT_LENGTH).toString('hex');
 }
 
-/**
- * Test encryption/decryption (for development only)
- */
-export function testCrypto() {
-  console.log('🔐 Testing crypto functions...');
-  
-  const testPrivateKey = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef';
-  console.log('Original:', testPrivateKey);
-  
-  const { encryptedPrivateKey, salt } = encryptPrivateKey(testPrivateKey);
-  console.log('Encrypted:', encryptedPrivateKey);
-  console.log('Salt:', salt);
-  
-  const decrypted = decryptPrivateKey(encryptedPrivateKey, salt);
-  console.log('Decrypted:', decrypted);
-  
-  console.log('Match:', testPrivateKey === decrypted ? '✅' : '❌');
-}
+

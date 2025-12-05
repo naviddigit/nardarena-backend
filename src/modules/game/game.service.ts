@@ -672,14 +672,16 @@ export class GameService {
    * Get user game statistics
    */
   async getUserStats(userId: string) {
-    // Get all completed games for this user
+    // Get all games (both ACTIVE and COMPLETED) for this user, ordered by creation date
     const games = await this.prisma.game.findMany({
       where: {
         OR: [
           { whitePlayerId: userId },
           { blackPlayerId: userId },
         ],
-        status: 'COMPLETED',
+        status: {
+          in: ['ACTIVE', 'COMPLETED'],
+        },
       },
       select: {
         id: true,
@@ -690,6 +692,10 @@ export class GameService {
         blackSetsWon: true,
         createdAt: true,
         endedAt: true,
+        status: true,
+      },
+      orderBy: {
+        createdAt: 'asc', // Order by creation time for streak calculation
       },
     });
 
@@ -697,10 +703,19 @@ export class GameService {
     let wins = 0;
     let losses = 0;
     let draws = 0;
+    let activeGames = 0;
+    let currentStreak = 0;
+    let bestStreak = 0;
+    let tempStreak = 0;
+    let lastGameWasWin = false;
 
     games.forEach((game) => {
-      if (!game.winner) {
+      if (game.status === 'ACTIVE') {
+        activeGames++;
+      } else if (!game.winner) {
         draws++;
+        tempStreak = 0; // Draw breaks streak
+        lastGameWasWin = false;
       } else {
         const isWhitePlayer = game.whitePlayerId === userId;
         const userWon = 
@@ -709,27 +724,40 @@ export class GameService {
         
         if (userWon) {
           wins++;
+          tempStreak++;
+          lastGameWasWin = true;
+          if (tempStreak > bestStreak) {
+            bestStreak = tempStreak;
+          }
         } else {
           losses++;
+          tempStreak = 0; // Loss breaks streak
+          lastGameWasWin = false;
         }
       }
     });
 
-    const winRate = gamesPlayed > 0 ? (wins / gamesPlayed) * 100 : 0;
+    // Current streak is the temp streak if last game was a win
+    currentStreak = lastGameWasWin ? tempStreak : 0;
+
+    const completedGames = gamesPlayed - activeGames;
+    const winRate = completedGames > 0 ? (wins / completedGames) * 100 : 0;
 
     return {
       gamesPlayed,
       wins,
       losses,
       draws,
+      activeGames,
+      completedGames,
       winRate: Math.round(winRate * 10) / 10, // Round to 1 decimal
       totalEarnings: 0, // TODO: Implement when wallet integration is done
       totalLosses: 0,
       netProfit: 0,
-      bestStreak: 0, // TODO: Calculate streak
-      currentStreak: 0,
+      bestStreak,
+      currentStreak,
       averageGameDuration: 0, // TODO: Calculate from createdAt/endedAt
-      lastGameAt: games.length > 0 ? games[0].endedAt : null,
+      lastGameAt: games.length > 0 ? (games[games.length - 1].endedAt || games[games.length - 1].createdAt) : null,
     };
   }
 
@@ -1207,5 +1235,147 @@ export class GameService {
         },
       });
     }
+  }
+
+  /**
+   * Get leaderboard with rankings
+   */
+  async getLeaderboard(
+    period: 'weekly' | 'monthly' | 'all-time' = 'weekly',
+    limit: number = 10,
+  ) {
+    let dateFilter: any = {};
+
+    if (period === 'weekly') {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      dateFilter = { createdAt: { gte: weekAgo } };
+    } else if (period === 'monthly') {
+      const monthAgo = new Date();
+      monthAgo.setMonth(monthAgo.getMonth() - 1);
+      dateFilter = { createdAt: { gte: monthAgo } };
+    }
+
+    // Get all completed games in the period
+    const games = await this.prisma.game.findMany({
+      where: {
+        status: 'COMPLETED',
+        ...dateFilter,
+      },
+      include: {
+        whitePlayer: {
+          select: {
+            id: true,
+            username: true,
+            avatar: true,
+          },
+        },
+        blackPlayer: {
+          select: {
+            id: true,
+            username: true,
+            avatar: true,
+          },
+        },
+      },
+    });
+
+    // Calculate stats for each user
+    const userStatsMap = new Map<
+      string,
+      {
+        userId: string;
+        username: string;
+        avatar?: string | null;
+        wins: number;
+        losses: number;
+        draws: number;
+        gamesPlayed: number;
+        totalEarnings: number;
+      }
+    >();
+
+    games.forEach((game) => {
+      // Process white player
+      if (game.whitePlayer) {
+        const userId = game.whitePlayer.id;
+        if (!userStatsMap.has(userId)) {
+          userStatsMap.set(userId, {
+            userId,
+            username: game.whitePlayer.username,
+            avatar: game.whitePlayer.avatar,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            gamesPlayed: 0,
+            totalEarnings: 0,
+          });
+        }
+        const stats = userStatsMap.get(userId)!;
+        stats.gamesPlayed++;
+        if (game.winner === 'WHITE') {
+          stats.wins++;
+          stats.totalEarnings += Number(game.betAmount || 0);
+        } else if (game.winner === 'BLACK') {
+          stats.losses++;
+        } else {
+          stats.draws++;
+        }
+      }
+
+      // Process black player
+      if (game.blackPlayer) {
+        const userId = game.blackPlayer.id;
+        if (!userStatsMap.has(userId)) {
+          userStatsMap.set(userId, {
+            userId,
+            username: game.blackPlayer.username,
+            avatar: game.blackPlayer.avatar,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            gamesPlayed: 0,
+            totalEarnings: 0,
+          });
+        }
+        const stats = userStatsMap.get(userId)!;
+        stats.gamesPlayed++;
+        if (game.winner === 'BLACK') {
+          stats.wins++;
+          stats.totalEarnings += Number(game.betAmount || 0);
+        } else if (game.winner === 'WHITE') {
+          stats.losses++;
+        } else {
+          stats.draws++;
+        }
+      }
+    });
+
+    // Convert to array and calculate rankings
+    const leaderboard = Array.from(userStatsMap.values())
+      .filter((user) => user.gamesPlayed > 0)
+      .map((user) => {
+        const winRate = user.gamesPlayed > 0 ? (user.wins / user.gamesPlayed) * 100 : 0;
+        // Points calculation: wins * 3 + winRate
+        const points = user.wins * 3 + winRate;
+
+        return {
+          ...user,
+          winRate: parseFloat(winRate.toFixed(2)),
+          points: parseFloat(points.toFixed(2)),
+        };
+      })
+      .sort((a, b) => b.points - a.points)
+      .slice(0, limit)
+      .map((user, index) => ({
+        rank: index + 1,
+        ...user,
+      }));
+
+    return {
+      leaderboard,
+      total: leaderboard.length,
+      period,
+    };
   }
 }

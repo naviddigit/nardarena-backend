@@ -1,0 +1,79 @@
+### Bot Users API Tests
+### Make sure you're logged in as admin first
+
+@baseUrl = http://localhost:3002/api
+@token = YOUR_ADMIN_JWT_TOKEN_HERE
+
+###
+# 1. Generate a preview (without creating)
+GET {{baseUrl}}/bot-users/preview
+Authorization: Bearer {{token}}
+
+###
+# 2. Generate a preview for specific country
+GET {{baseUrl}}/bot-users/preview?country=US
+Authorization: Bearer {{token}}
+
+###
+# 3. Generate and create a bot user in one step
+POST {{baseUrl}}/bot-users/generate
+Authorization: Bearer {{token}}
+
+###
+# 4. Generate and create with specific country
+POST {{baseUrl}}/bot-users/generate?country=TR
+Authorization: Bearer {{token}}
+
+###
+# 5. Create a bot user from preview data
+POST {{baseUrl}}/bot-users/create
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "firstName": "John",
+  "lastName": "Smith",
+  "displayName": "John Smith",
+  "username": "john_smith_123",
+  "email": "john_smith_123@bot.nardaria.local",
+  "password": "SecurePass123!",
+  "country": "US",
+  "countryName": "United States",
+  "avatar": "/assets/images/avatar/avatar-1.webp"
+}
+
+###
+# 6. Get all bot users (page 1, 10 items)
+GET {{baseUrl}}/bot-users?page=1&limit=10
+Authorization: Bearer {{token}}
+
+###
+# 7. Get bot users (page 2, 25 items)
+GET {{baseUrl}}/bot-users?page=2&limit=25
+Authorization: Bearer {{token}}
+
+###
+# 8. Bulk generate bot users (5 users, random countries)
+POST {{baseUrl}}/bot-users/bulk
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "count": 5
+}
+
+###
+# 9. Bulk generate bot users from specific country
+POST {{baseUrl}}/bot-users/bulk
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "count": 10,
+  "country": "IR"
+}
+
+###
+# 10. Delete a bot user (replace with actual ID)
+DELETE {{baseUrl}}/bot-users/REPLACE_WITH_BOT_USER_ID
+Authorization: Bearer {{token}}

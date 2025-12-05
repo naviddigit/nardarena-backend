@@ -73,18 +73,26 @@ export class AdminService {
     search?: string,
     sortBy?: string,
     sortOrder: 'asc' | 'desc' = 'desc',
+    country?: string,
   ) {
     const skip = (page - 1) * limit;
 
+    const baseWhere: any = { isBot: false };
+    
+    if (country) {
+      baseWhere.country = country;
+    }
+
     const where = search
       ? {
+          ...baseWhere,
           OR: [
             { email: { contains: search, mode: 'insensitive' as const } },
             { username: { contains: search, mode: 'insensitive' as const } },
             { displayName: { contains: search, mode: 'insensitive' as const } },
           ],
         }
-      : {};
+      : baseWhere;
 
     // Map frontend field names to database field names
     const sortFieldMap: Record<string, string> = {
@@ -112,6 +120,8 @@ export class AdminService {
           avatar: true,
           role: true,
           status: true,
+          isBot: true,
+          country: true,
           createdAt: true,
           lastLoginAt: true,
           stats: {
@@ -135,6 +145,24 @@ export class AdminService {
         pages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Get real users count by country
+   */
+  async getUsersByCountry() {
+    const users = await this.prisma.user.findMany({
+      where: { isBot: false },
+      select: { country: true },
+    });
+
+    const countByCountry = users.reduce((acc: Record<string, number>, user) => {
+      const country = user.country || 'UNKNOWN';
+      acc[country] = (acc[country] || 0) + 1;
+      return acc;
+    }, {});
+
+    return countByCountry;
   }
 
   /**

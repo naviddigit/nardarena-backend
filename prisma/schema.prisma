@@ -26,6 +26,7 @@ model User {
   avatar                String?   // Avatar URL or path
   country               String?   // ISO country code (e.g., 'US', 'IR')
   role                  UserRole  @default(USER) // User role
+  isBot                 Boolean   @default(false) // Bot user for AI simulation
   
   // Account status
   status                UserStatus @default(ACTIVE)
@@ -57,6 +58,7 @@ model User {
   @@index([username])
   @@index([status])
   @@index([googleId])
+  @@index([isBot])
   @@map("users")
 }
 

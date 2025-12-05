@@ -58,16 +58,6 @@ export class GameController {
     return this.gameService.endGame(gameId, userId, endGameDto);
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get game details with all moves' })
-  @ApiResponse({ status: 200, description: 'Game found' })
-  @ApiResponse({ status: 404, description: 'Game not found' })
-  @ApiResponse({ status: 403, description: 'Not a player in this game' })
-  async getGame(@Req() req: any, @Param('id') gameId: string) {
-    const userId = req.user.userId;
-    return this.gameService.getGame(gameId, userId);
-  }
-
   @Get('stats')
   @ApiOperation({ summary: 'Get user game statistics' })
   @ApiResponse({ status: 200, description: 'Statistics retrieved' })
@@ -95,6 +85,20 @@ export class GameController {
   ) {
     const userId = req.user.userId;
     return this.gameService.getMonthlyStats(userId, parseInt(year), parseInt(month));
+  }
+
+  @Get('leaderboard')
+  @ApiOperation({ summary: 'Get leaderboard/rankings' })
+  @ApiResponse({ status: 200, description: 'Leaderboard retrieved' })
+  async getLeaderboard(
+    @Query('period') period?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = limit ? parseInt(limit, 10) : 10;
+    const validPeriod = ['weekly', 'monthly', 'all-time'].includes(period || '') 
+      ? period as 'weekly' | 'monthly' | 'all-time'
+      : 'weekly';
+    return this.gameService.getLeaderboard(validPeriod, parsedLimit);
   }
 
   @Get('history/me')
@@ -204,5 +208,15 @@ export class GameController {
   async canPlay(@Req() req: any, @Param('id') gameId: string) {
     const userId = req.user.userId;
     return this.gameService.canUserPlay(gameId, userId);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get game details with all moves' })
+  @ApiResponse({ status: 200, description: 'Game found' })
+  @ApiResponse({ status: 404, description: 'Game not found' })
+  @ApiResponse({ status: 403, description: 'Not a player in this game' })
+  async getGame(@Req() req: any, @Param('id') gameId: string) {
+    const userId = req.user.userId;
+    return this.gameService.getGame(gameId, userId);
   }
 }
