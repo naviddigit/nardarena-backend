@@ -185,6 +185,20 @@ export class GameService {
       aiPlayerColor: gameType === 'AI' ? aiPlayerColor : undefined,
     };
 
+    // 🎲 Pre-generate ALL dice for anti-cheat (unhackable!)
+    const openingDiceWhite = Math.floor(Math.random() * 6) + 1;
+    const openingDiceBlack = Math.floor(Math.random() * 6) + 1;
+    const firstRollDice = [Math.floor(Math.random() * 6) + 1, Math.floor(Math.random() * 6) + 1];
+    
+    console.log('\n=================================================');
+    console.log('🎲 Pre-generated dice at game creation:');
+    console.log('=================================================');
+    console.log(`📋 Opening Roll (1d6):`);
+    console.log(`   🎲 White Player: ${openingDiceWhite}`);
+    console.log(`   🎲 Black Player: ${openingDiceBlack}`);
+    console.log(`📋 Winner's First Roll (2d6): [${firstRollDice[0]}, ${firstRollDice[1]}]`);
+    console.log('=================================================\n');
+
     const game = await this.prisma.game.create({
       data: {
         whitePlayerId,
@@ -194,6 +208,9 @@ export class GameService {
         timeControl,
         whiteTimeRemaining: timeControl, // ✅ Initialize timer for white
         blackTimeRemaining: timeControl, // ✅ Initialize timer for black
+        openingDiceWhite,
+        openingDiceBlack,
+        firstRollDice,
         gameState: initialBoardState,
         moveHistory: [],
         status: 'ACTIVE',
@@ -218,6 +235,12 @@ export class GameService {
         },
       },
     });
+
+    // 🎲 Log pre-generated dice for frontend
+    console.log('\n📤 [RESPONSE TO FRONTEND] Game created with pre-generated dice:');
+    console.log(`   Opening White: ${openingDiceWhite}`);
+    console.log(`   Opening Black: ${openingDiceBlack}`);
+    console.log(`   Winner First Roll: [${firstRollDice[0]}, ${firstRollDice[1]}]\n`);
 
     return game;
   }
@@ -398,6 +421,20 @@ export class GameService {
 
     const gameState = game.gameState as any;
     const currentPlayer = gameState.currentPlayer;
+    
+    // 🎲 OPENING PHASE: Return pre-generated opening dice
+    if (gameState.phase === 'opening') {
+      const openingDice = currentPlayer === 'white' ? game.openingDiceWhite : game.openingDiceBlack;
+      if (openingDice) {
+        console.log(`\n📤 [FRONTEND] Sending opening dice for ${currentPlayer}: [${openingDice}]`);
+        return {
+          dice: [openingDice],
+          source: 'opening-pregenerated',
+          timestamp: new Date().toISOString(),
+          message: 'Opening roll dice'
+        };
+      }
+    }
 
     // 🔒 PRIORITY 1: If turn not completed and dice exist, return SAME dice
     // This handles REFRESH scenario - user rolled but didn't press Done yet
@@ -461,8 +498,19 @@ export class GameService {
       
       const dice = gameState.nextDiceRoll as [number, number];
       
-      // ✅ CRITICAL: NO DATABASE UPDATE - only return dice!
-      console.log(`⚠️ NO DATABASE UPDATE - Only returning dice to frontend`);
+      // ✅ CRITICAL: Save currentTurnDice so refresh returns same dice!
+      await this.prisma.game.update({
+        where: { id: gameId },
+        data: {
+          gameState: {
+            ...gameState,
+            currentTurnDice: dice,
+            turnCompleted: false,
+          },
+        },
+      });
+      
+      console.log(`✅ [${currentPlayer}] Dice locked as currentTurnDice for refresh protection`);
       
       return {
         dice,
@@ -479,8 +527,19 @@ export class GameService {
       console.log(`📋 nextRoll:`, JSON.stringify(gameState.nextRoll || {}));
       console.log(`📋 nextDiceRoll:`, JSON.stringify(gameState.nextDiceRoll || null));
 
-      // ✅ CRITICAL: NO DATABASE UPDATE - only return dice!
-      console.log(`⚠️ NO DATABASE UPDATE - Only returning dice to frontend`);
+      // ✅ CRITICAL: Save currentTurnDice so refresh returns same dice!
+      await this.prisma.game.update({
+        where: { id: gameId },
+        data: {
+          gameState: {
+            ...gameState,
+            currentTurnDice: dice,
+            turnCompleted: false,
+          },
+        },
+      });
+      
+      console.log(`✅ [${currentPlayer}] Generated dice locked as currentTurnDice for refresh protection`);
 
       return {
         dice,
@@ -560,10 +619,10 @@ export class GameService {
       turnCompleted: true, // ✅ Mark as completed
       
       phase: 'waiting', // Back to waiting for next roll
-      currentTurnDice: gameState.diceValues || gameState.currentTurnDice, // ✅ Save current dice before clearing
+      currentTurnDice: [], // ✅ CLEAR currentTurnDice so next player gets fresh dice from nextRoll
       diceValues: [], // Clear current dice
       nextRoll: updatedNextRoll, // ✅ ONLY this field for dice
-      nextDiceRoll: nextPlayerDice, // ✅ ALSO save to nextDiceRoll for compatibility (null if AI is next)
+      nextDiceRoll: nextPlayerDice, // ✅ ALSO save to nextDiceRoll for compatibility
     };
 
     // ✅ Get latest timers from gameState if available
@@ -1037,6 +1096,12 @@ export class GameService {
       throw new BadRequestException('This is not an AI game');
     }
 
+    console.log('🔍 Game status check:', {
+      status: game.status,
+      gameType: game.gameType,
+      gameId: game.id,
+    });
+
     if (game.status !== 'ACTIVE') {
       throw new BadRequestException('Game is not active');
     }
@@ -1167,7 +1232,7 @@ export class GameService {
     // ✅ Switch turn to human player after AI moves
     const humanPlayerColor = aiColor === 'white' ? 'black' : 'white';
     newGameState.currentPlayer = humanPlayerColor;
-    newGameState.currentTurnDice = diceRoll; // ✅ Save AI's dice before clearing
+    newGameState.currentTurnDice = []; // ✅ CLEAR so human gets fresh dice from nextRoll
     newGameState.diceValues = [];
     newGameState.phase = 'waiting';
     
@@ -1189,11 +1254,33 @@ export class GameService {
     console.log('🎲 AI Done - Generated dice for human player:', nextDiceRoll);
     console.log('📋 nextRoll:', JSON.stringify(newGameState.nextRoll));
 
+    // ✅ Calculate AI timer - subtract elapsed time since lastDoneAt
+    let aiTimeRemaining: number = aiColor === 'white' ? (game.whiteTimeRemaining || 0) : (game.blackTimeRemaining || 0);
+    
+    if (gameState.lastDoneAt && aiTimeRemaining > 0) {
+      const now = Date.now();
+      const lastDoneTime = new Date(gameState.lastDoneAt).getTime();
+      const elapsedSeconds = Math.floor((now - lastDoneTime) / 1000);
+      
+      // Subtract AI's thinking time
+      aiTimeRemaining = Math.max(0, aiTimeRemaining - elapsedSeconds);
+      
+      console.log(`⏱️ AI timer updated:`, {
+        aiColor,
+        previousTime: aiColor === 'white' ? game.whiteTimeRemaining : game.blackTimeRemaining,
+        elapsedSeconds,
+        newTime: aiTimeRemaining,
+      });
+    }
+
     // Update game state in database
     await this.prisma.game.update({
       where: { id: gameId },
       data: {
         gameState: newGameState,
+        // ✅ Update AI's timer
+        whiteTimeRemaining: aiColor === 'white' ? aiTimeRemaining : game.whiteTimeRemaining,
+        blackTimeRemaining: aiColor === 'black' ? aiTimeRemaining : game.blackTimeRemaining,
         updatedAt: new Date(),
       },
     });
@@ -1228,6 +1315,9 @@ export class GameService {
       
       // ✅ Check for hit at destination
       const destPoint = newBoard.points[move.to];
+      if (!destPoint) {
+        throw new Error(`Invalid move.to: ${move.to} - point does not exist`);
+      }
       if (destPoint[opponentColor] === 1) {
         // Hit opponent checker
         destPoint[opponentColor] = 0;
@@ -1243,6 +1333,14 @@ export class GameService {
     }
     // Normal move
     else {
+      // ✅ Validate points exist
+      if (!newBoard.points[move.from]) {
+        throw new Error(`Invalid move.from: ${move.from} - point does not exist`);
+      }
+      if (!newBoard.points[move.to]) {
+        throw new Error(`Invalid move.to: ${move.to} - point does not exist`);
+      }
+      
       newBoard.points[move.from][color]--;
       
       // ✅ Check for hit at destination
@@ -1531,16 +1629,17 @@ export class GameService {
 
     const gameState = game.gameState as any;
 
-    // ✅ ALWAYS generate dice for winner (like opponent pressed Done for them)
-    const nextPlayerDice = this.generateDice();
-    console.log(`🎲 [Opening] Generating dice for winner ${winner}:`, nextPlayerDice);
+    // 🎲 Use pre-generated firstRollDice for winner
+    const nextPlayerDice = game.firstRollDice as [number, number];
+    
+    console.log(`\n📤 [FRONTEND] Sending winner's first roll for ${winner}: [${nextPlayerDice[0]}, ${nextPlayerDice[1]}]`);
 
     const updatedNextRoll = {
       white: winner === 'white' ? nextPlayerDice : null,
       black: winner === 'black' ? nextPlayerDice : null,
     };
 
-    console.log(`📋 nextRoll:`, JSON.stringify(updatedNextRoll));
+    console.log(`📋 nextRoll structure:`, JSON.stringify(updatedNextRoll));
 
     const updatedGameState = {
       ...gameState,

@@ -168,6 +168,11 @@ model Game {
   whiteTimeRemaining Int?       // seconds remaining for white player (null = not started yet)
   blackTimeRemaining Int?       // seconds remaining for black player (null = not started yet)
   
+  // 🎲 Pre-generated dice for anti-cheat (generated at game creation)
+  openingDiceWhite  Int?        // Opening roll for white (1-6)
+  openingDiceBlack  Int?        // Opening roll for black (1-6)
+  firstRollDice     Json?       // First 2d6 after opening winner determined [n, n]
+  
   // Game result
   status            GameStatus  @default(ACTIVE)
   winner            PlayerColor?
