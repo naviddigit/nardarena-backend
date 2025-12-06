@@ -722,48 +722,6 @@ export class GameService {
     return game;
   }
 
-  /**
-   * ✅ Update timers only (for real-time sync during gameplay)
-   * This is called periodically to save timer state without recording moves
-   */
-  async updateTimers(gameId: string, userId: string, whiteTime?: number, blackTime?: number) {
-    const game = await this.prisma.game.findUnique({
-      where: { id: gameId },
-    });
-
-    if (!game) {
-      throw new NotFoundException('Game not found');
-    }
-
-    // Verify user is a player
-    if (game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
-      throw new ForbiddenException('Not a player in this game');
-    }
-
-    const updateData: any = {};
-    
-    if (whiteTime !== undefined && whiteTime !== null) {
-      updateData.whiteTimeRemaining = Math.max(0, Math.floor(whiteTime));
-    }
-    
-    if (blackTime !== undefined && blackTime !== null) {
-      updateData.blackTimeRemaining = Math.max(0, Math.floor(blackTime));
-    }
-
-    if (Object.keys(updateData).length > 0) {
-      await this.prisma.game.update({
-        where: { id: gameId },
-        data: updateData,
-      });
-    }
-
-    return {
-      success: true,
-      whiteTimeRemaining: updateData.whiteTimeRemaining,
-      blackTimeRemaining: updateData.blackTimeRemaining,
-    };
-  }
-
   async getUserGameHistory(userId: string, limit: number = 20, offset: number = 0) {
     const games = await this.prisma.game.findMany({
       where: {
