@@ -160,9 +160,13 @@ model Game {
   moveHistory       Json[]      // Array of all moves with timestamps
   
   // Game settings
-  timeControl       Int         @default(120) // seconds per player
+  timeControl       Int         @default(120) // seconds per player (initial time per player)
   gameMode          GameMode    @default(CLASSIC)
   betAmount         Decimal?    @db.Decimal(18, 6) // NULL for non-bet games
+  
+  // Timer state (real-time remaining time for each player)
+  whiteTimeRemaining Int?       // seconds remaining for white player (null = not started yet)
+  blackTimeRemaining Int?       // seconds remaining for black player (null = not started yet)
   
   // Game result
   status            GameStatus  @default(ACTIVE)

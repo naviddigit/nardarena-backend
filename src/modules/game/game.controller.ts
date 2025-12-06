@@ -202,6 +202,23 @@ export class GameController {
     return this.gameService.endTurn(gameId, userId);
   }
 
+  @Patch(':id/timers')
+  @ApiOperation({ summary: 'Update game timers (real-time sync)' })
+  @ApiResponse({ status: 200, description: 'Timers updated successfully' })
+  async updateTimers(
+    @Req() req: any,
+    @Param('id') gameId: string,
+    @Body() body: { whiteTimeRemaining?: number; blackTimeRemaining?: number },
+  ) {
+    const userId = req.user.userId;
+    return this.gameService.updateTimers(
+      gameId,
+      userId,
+      body.whiteTimeRemaining,
+      body.blackTimeRemaining,
+    );
+  }
+
   @Post(':id/complete-opening-roll')
   @ApiOperation({ summary: 'Complete opening roll and generate dice for winner' })
   @ApiResponse({ status: 200, description: 'Opening roll completed' })

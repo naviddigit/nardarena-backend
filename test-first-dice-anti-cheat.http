@@ -1,0 +1,59 @@
+### Test Winner First Dice Anti-Cheat
+
+# 1. Create AI game
+POST http://localhost:3001/api/game/create
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "gameType": "AI",
+  "aiDifficulty": "MEDIUM"
+}
+
+###
+
+# 2. Update state after opening roll (simulate: white=3, black=5, AI wins)
+PATCH http://localhost:3001/api/game/{{gameId}}/state
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "gameState": {
+    "openingRoll": {
+      "white": 3,
+      "black": 5
+    },
+    "currentPlayer": "black",
+    "phase": "waiting"
+  }
+}
+
+###
+
+# 3. End turn (switches to winner)
+POST http://localhost:3001/api/game/{{gameId}}/end-turn
+Authorization: Bearer {{token}}
+
+###
+
+# 4. Generate first dice for winner (ANTI-CHEAT)
+POST http://localhost:3001/api/game/{{gameId}}/generate-first-dice
+Authorization: Bearer {{token}}
+
+###
+
+# 5. Roll dice (should return first dice)
+POST http://localhost:3001/api/game/{{gameId}}/roll-dice
+Authorization: Bearer {{token}}
+
+###
+
+# 6. Try to roll again (should return SAME dice - anti-cheat!)
+POST http://localhost:3001/api/game/{{gameId}}/roll-dice
+Authorization: Bearer {{token}}
+
+###
+
+# 7. Get game state (check firstDiceRoll field)
+GET http://localhost:3001/api/game/{{gameId}}
+Authorization: Bearer {{token}}

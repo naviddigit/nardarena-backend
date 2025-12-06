@@ -60,12 +60,14 @@ import { CreateGameDto } from './dto/create-game.dto';
 import { RecordMoveDto } from './dto/record-move.dto';
 import { EndGameDto } from './dto/end-game.dto';
 import { AIPlayerService, AIDifficulty } from './ai/ai-player.service';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class GameService {
   constructor(
     private prisma: PrismaService,
     private aiPlayerService: AIPlayerService,
+    private settingsService: SettingsService,
   ) {}
 
   // AI Player ID (system user for AI games)
@@ -86,7 +88,19 @@ export class GameService {
   }
 
   async createGame(userId: string, createGameDto: CreateGameDto) {
-    const { gameType, opponentId, timeControl = 1800, gameMode = 'CLASSIC', aiDifficulty = 'MEDIUM', aiPlayerColor = 'black' } = createGameDto;
+    const { gameType, opponentId, gameMode = 'CLASSIC', aiDifficulty = 'MEDIUM', aiPlayerColor = 'black' } = createGameDto;
+
+    // ✅ Get timeControl from GameSettings (anti-cheat: always from database)
+    let timeControl = 1800; // Default 30 minutes
+    try {
+      const timeSetting = await this.settingsService.getGameSetting('game.total_time_per_game');
+      if (timeSetting && timeSetting.value) {
+        timeControl = parseInt(timeSetting.value, 10);
+        console.log(`⏱️ Loaded timeControl from settings: ${timeControl} seconds`);
+      }
+    } catch (error) {
+      console.warn('Failed to load time control from settings, using default:', error);
+    }
 
     // ✅ Determine white and black players based on aiPlayerColor
     let whitePlayerId: string;
@@ -178,6 +192,8 @@ export class GameService {
         gameType,
         gameMode,
         timeControl,
+        whiteTimeRemaining: timeControl, // ✅ Initialize timer for white
+        blackTimeRemaining: timeControl, // ✅ Initialize timer for black
         gameState: initialBoardState,
         moveHistory: [],
         status: 'ACTIVE',
@@ -262,15 +278,27 @@ export class GameService {
         }
       : game.gameState;
 
+    // ✅ Update player's time remaining in database
+    const updateData: any = {
+      moveHistory: {
+        push: moveData,
+      },
+      gameState: updatedBoardState,
+      updatedAt: new Date(),
+    };
+
+    // ✅ Save timer if provided
+    if (recordMoveDto.timeRemaining !== undefined && recordMoveDto.timeRemaining !== null) {
+      if (recordMoveDto.playerColor === 'WHITE') {
+        updateData.whiteTimeRemaining = recordMoveDto.timeRemaining;
+      } else if (recordMoveDto.playerColor === 'BLACK') {
+        updateData.blackTimeRemaining = recordMoveDto.timeRemaining;
+      }
+    }
+
     await this.prisma.game.update({
       where: { id: gameId },
-      data: {
-        moveHistory: {
-          push: moveData,
-        },
-        gameState: updatedBoardState,
-        updatedAt: new Date(),
-      },
+      data: updateData,
     });
     
     console.log('✅ Move recorded:', {
@@ -538,10 +566,16 @@ export class GameService {
       nextDiceRoll: nextPlayerDice, // ✅ ALSO save to nextDiceRoll for compatibility (null if AI is next)
     };
 
+    // ✅ Get latest timers from gameState if available
+    const whiteTime = gameState.remainingTime?.white;
+    const blackTime = gameState.remainingTime?.black;
+
     const updatedGame = await this.prisma.game.update({
       where: { id: gameId },
       data: {
         gameState: updatedGameState,
+        whiteTimeRemaining: whiteTime !== undefined ? whiteTime : game.whiteTimeRemaining,
+        blackTimeRemaining: blackTime !== undefined ? blackTime : game.blackTimeRemaining,
         updatedAt: new Date(),
       },
       include: {
@@ -686,6 +720,48 @@ export class GameService {
     console.log('  currentTurnDice:', JSON.stringify((game.gameState as any)?.currentTurnDice));
 
     return game;
+  }
+
+  /**
+   * ✅ Update timers only (for real-time sync during gameplay)
+   * This is called periodically to save timer state without recording moves
+   */
+  async updateTimers(gameId: string, userId: string, whiteTime?: number, blackTime?: number) {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    // Verify user is a player
+    if (game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
+      throw new ForbiddenException('Not a player in this game');
+    }
+
+    const updateData: any = {};
+    
+    if (whiteTime !== undefined && whiteTime !== null) {
+      updateData.whiteTimeRemaining = Math.max(0, Math.floor(whiteTime));
+    }
+    
+    if (blackTime !== undefined && blackTime !== null) {
+      updateData.blackTimeRemaining = Math.max(0, Math.floor(blackTime));
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      await this.prisma.game.update({
+        where: { id: gameId },
+        data: updateData,
+      });
+    }
+
+    return {
+      success: true,
+      whiteTimeRemaining: updateData.whiteTimeRemaining,
+      blackTimeRemaining: updateData.blackTimeRemaining,
+    };
   }
 
   async getUserGameHistory(userId: string, limit: number = 20, offset: number = 0) {
