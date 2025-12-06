@@ -195,11 +195,18 @@ export class GameController {
   }
 
   @Post(':id/end-turn')
-  @ApiOperation({ summary: 'End current player turn (Done button)' })
+  @ApiOperation({ summary: 'End turn and switch to next player' })
   @ApiResponse({ status: 200, description: 'Turn ended successfully' })
   async endTurn(@Req() req: any, @Param('id') gameId: string) {
     const userId = req.user.userId;
     return this.gameService.endTurn(gameId, userId);
+  }
+
+  @Post(':id/complete-opening-roll')
+  @ApiOperation({ summary: 'Complete opening roll and generate dice for winner' })
+  @ApiResponse({ status: 200, description: 'Opening roll completed' })
+  async completeOpeningRoll(@Req() req: any, @Param('id') gameId: string, @Body() body: { winner: 'white' | 'black' }) {
+    return this.gameService.completeOpeningRoll(gameId, body.winner);
   }
 
   @Get(':id/can-play')

@@ -71,11 +71,14 @@ export class GameService {
   // AI Player ID (system user for AI games)
   private readonly AI_PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // AI system player
 
-  /**
-   * 🎲 Generate random dice roll (1-6, 1-6)
-   * Used for pre-generating next player's dice to prevent refresh cheating
-   */
-  private generateRandomDice(): [number, number] {
+  // 🎲 Generate dice (random or specific for testing)
+  private generateDice(rollOne?: number, rollTwo?: number): [number, number] {
+    // If both values provided, use them (for testing)
+    if (rollOne !== undefined && rollTwo !== undefined) {
+      return [rollOne, rollTwo];
+    }
+    
+    // Otherwise, generate random dice
     return [
       Math.floor(Math.random() * 6) + 1,
       Math.floor(Math.random() * 6) + 1,
@@ -249,15 +252,13 @@ export class GameService {
       timestamp: new Date().toISOString(),
     };
 
-    // 🎲 Generate next dice roll for the NEXT player (anti-cheat)
-    const nextDiceRoll = this.generateRandomDice();
-    console.log('🎲 Pre-generating dice for next turn:', nextDiceRoll);
+    // ✅ DON'T generate dice here! Dice should only be generated when Done is pressed (in endTurn)
+    // recordMove is called MULTIPLE times (once per move), we don't want to regenerate dice each time!
 
-    // Update boardStateAfter to include the pre-generated dice
+    // Update boardStateAfter WITHOUT generating new dice
     const updatedBoardState = recordMoveDto.boardStateAfter 
       ? { 
-          ...(recordMoveDto.boardStateAfter as any), 
-          nextDiceRoll,
+          ...(recordMoveDto.boardStateAfter as any),
         }
       : game.gameState;
 
@@ -277,7 +278,6 @@ export class GameService {
       from: recordMoveDto.from,
       to: recordMoveDto.to,
       gameStateUpdated: !!recordMoveDto.boardStateAfter,
-      nextDiceRoll, // Log the pre-generated dice
     });
 
     // If this is an AI game and player just finished their turn, trigger AI move
@@ -369,37 +369,90 @@ export class GameService {
     }
 
     const gameState = game.gameState as any;
+    const currentPlayer = gameState.currentPlayer;
 
-    // If turn not completed and dice exist, return SAME dice
-    if (gameState.turnCompleted === false && gameState.currentTurnDice && Array.isArray(gameState.currentTurnDice)) {
-      console.log('🔒 Turn not completed! Returning SAME dice:', gameState.currentTurnDice);
+    // 🔒 PRIORITY 1: If turn not completed and dice exist, return SAME dice
+    // This handles REFRESH scenario - user rolled but didn't press Done yet
+    if (
+      gameState.turnCompleted === false && 
+      gameState.currentTurnDice && 
+      Array.isArray(gameState.currentTurnDice) &&
+      gameState.currentTurnDice.length === 2
+    ) {
+      console.log(`🔒 [${currentPlayer}] Turn not completed! Returning SAME dice (REFRESH):`, gameState.currentTurnDice);
+      console.log(`📋 nextRoll unchanged:`, JSON.stringify(gameState.nextRoll || {}));
       
       return {
         dice: gameState.currentTurnDice,
-        source: 'current-turn',
+        source: 'current-turn-refresh',
         timestamp: new Date().toISOString(),
-        message: 'You must complete your turn (press Done) before rolling again',
+        message: 'Returning same dice after page refresh',
       };
     }
 
-    // Check if we have pre-generated dice
-    if (gameState.nextDiceRoll && Array.isArray(gameState.nextDiceRoll) && gameState.nextDiceRoll.length === 2) {
-      console.log('🎲 Using pre-generated dice:', gameState.nextDiceRoll);
+    // 🎲 PRIORITY 2: Check if current player has nextRoll (ONLY if phase is 'waiting' AND no currentTurnDice)
+    // This ensures nextRoll is used ONLY ONCE (when player first rolls after Done)
+    const playerNextRoll = gameState.nextRoll?.[currentPlayer];
+    if (
+      gameState.phase === 'waiting' &&
+      playerNextRoll && 
+      Array.isArray(playerNextRoll) && 
+      playerNextRoll.length === 2 &&
+      (!gameState.currentTurnDice || gameState.currentTurnDice.length === 0)
+    ) {
+      console.log(`🎲 [${currentPlayer}] Using nextRoll (FIRST ROLL after Done):`, playerNextRoll);
+      console.log(`📋 nextRoll BEFORE use:`, JSON.stringify(gameState.nextRoll));
       
-      // ⚠️ DON'T SAVE TO DATABASE HERE!
-      // Just return the dice - frontend will use them
-      // Database will be saved when Done button is pressed
+      const dice = playerNextRoll;
+      
+      // ✅ CRITICAL: Save currentTurnDice so refresh returns same dice!
+      await this.prisma.game.update({
+        where: { id: gameId },
+        data: {
+          gameState: {
+            ...gameState,
+            currentTurnDice: dice,
+            turnCompleted: false,
+          },
+        },
+      });
+      
+      console.log(`✅ [${currentPlayer}] Dice locked as currentTurnDice for refresh protection`);
       
       return {
-        dice: gameState.nextDiceRoll,
-        source: 'pre-generated',
+        dice,
+        source: 'nextRoll',
         timestamp: new Date().toISOString(),
         message: 'Dice rolled - press Done to save',
       };
-    } else {
-      // Fallback: Generate new dice (for opening phase or first turn)
-      const dice = this.generateRandomDice();
-      console.log('🎲 No pre-generated dice, generating new:', dice);
+    }
+    
+    // 🎲 PRIORITY 2.5: Check nextDiceRoll (compatibility with old system)
+    else if (gameState.nextDiceRoll && Array.isArray(gameState.nextDiceRoll) && gameState.nextDiceRoll.length === 2) {
+      console.log(`🎲 [${currentPlayer}] Using nextDiceRoll:`, gameState.nextDiceRoll);
+      
+      const dice = gameState.nextDiceRoll as [number, number];
+      
+      // ✅ CRITICAL: NO DATABASE UPDATE - only return dice!
+      console.log(`⚠️ NO DATABASE UPDATE - Only returning dice to frontend`);
+      
+      return {
+        dice,
+        source: 'nextDiceRoll',
+        timestamp: new Date().toISOString(),
+        message: 'Dice rolled - press Done to save',
+      };
+    }
+    
+    else {
+      // 🆕 FALLBACK: Generate new dice (for opening phase or first turn)
+      const dice = this.generateDice();
+      console.log(`🎲 [${currentPlayer}] No nextRoll/nextDiceRoll found, generating new:`, dice);
+      console.log(`📋 nextRoll:`, JSON.stringify(gameState.nextRoll || {}));
+      console.log(`📋 nextDiceRoll:`, JSON.stringify(gameState.nextDiceRoll || null));
+
+      // ✅ CRITICAL: NO DATABASE UPDATE - only return dice!
+      console.log(`⚠️ NO DATABASE UPDATE - Only returning dice to frontend`);
 
       return {
         dice,
@@ -441,14 +494,33 @@ export class GameService {
       throw new BadRequestException('Not your turn');
     }
 
-    console.log(`✅ ${playerColor} pressed Done - ending turn`);
+    console.log(`✅ [${playerColor}] pressed Done - ending turn`);
 
     // Switch player
     const nextPlayer = currentPlayer === 'white' ? 'black' : 'white';
     
-    // Generate dice for next turn
-    const nextDiceRoll = this.generateRandomDice();
-    console.log('🎲 Pre-generating dice for next turn:', nextDiceRoll);
+    // ✅ ALWAYS generate dice for next player (whoever's turn is next gets dice)
+    let nextPlayerDice: [number, number];
+    
+    if (gameState.nextDiceRoll && Array.isArray(gameState.nextDiceRoll) && gameState.nextDiceRoll.length === 2) {
+      // ✅ Use existing nextDiceRoll - DON'T generate new!
+      nextPlayerDice = gameState.nextDiceRoll as [number, number];
+      console.log(`🔒 [${playerColor}] Done pressed - Using nextDiceRoll for ${nextPlayer}:`, nextPlayerDice);
+    } else {
+      // ✅ Generate new dice
+      nextPlayerDice = this.generateDice();
+      console.log(`🎲 [${playerColor}] Done pressed - Generating NEW dice for ${nextPlayer}:`, nextPlayerDice);
+    }
+
+    // ✅ CRITICAL: nextRoll should have dice for NEXT player, NOT current player!
+    // If white pressed Done → nextPlayer is black → black gets dice
+    // If black pressed Done → nextPlayer is white → white gets dice
+    const updatedNextRoll = {
+      white: nextPlayer === 'white' ? nextPlayerDice : null,
+      black: nextPlayer === 'black' ? nextPlayerDice : null,
+    };
+
+    console.log(`📋 nextRoll:`, JSON.stringify(updatedNextRoll));
 
     const updatedGameState = {
       ...gameState,
@@ -462,7 +534,8 @@ export class GameService {
       phase: 'waiting', // Back to waiting for next roll
       currentTurnDice: gameState.diceValues || gameState.currentTurnDice, // ✅ Save current dice before clearing
       diceValues: [], // Clear current dice
-      nextDiceRoll, // Store pre-generated dice
+      nextRoll: updatedNextRoll, // ✅ ONLY this field for dice
+      nextDiceRoll: nextPlayerDice, // ✅ ALSO save to nextDiceRoll for compatibility (null if AI is next)
     };
 
     const updatedGame = await this.prisma.game.update({
@@ -483,7 +556,7 @@ export class GameService {
     return {
       message: 'Turn ended successfully',
       nextPlayer,
-      nextDiceRoll, // Return for debugging (won't be shown to players)
+      nextRoll: updatedNextRoll, // ✅ ONLY this field
       game: {
         id: updatedGame.id,
         gameState: updatedGame.gameState,
@@ -604,6 +677,13 @@ export class GameService {
     if (game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
       throw new ForbiddenException('You are not a player in this game');
     }
+
+    // 🔍 DEBUG: Log nextRoll from database
+    console.log('🔍 [getGame] Reading from database:');
+    console.log('  gameId:', gameId);
+    console.log('  nextRoll:', JSON.stringify((game.gameState as any)?.nextRoll));
+    console.log('  nextDiceRoll:', JSON.stringify((game.gameState as any)?.nextDiceRoll));
+    console.log('  currentTurnDice:', JSON.stringify((game.gameState as any)?.currentTurnDice));
 
     return game;
   }
@@ -1062,10 +1142,18 @@ export class GameService {
     newGameState.lastDoneBy = aiColor;
     newGameState.lastDoneAt = new Date().toISOString();
 
-    // 🎲 Generate next dice roll for human player (anti-cheat)
-    const nextDiceRoll = this.generateRandomDice();
+    // 🎲 AI Done → Generate dice for human player (same as endTurn does)
+    const nextDiceRoll = this.generateDice();
     newGameState.nextDiceRoll = nextDiceRoll;
-    console.log('🎲 Pre-generating dice for human player:', nextDiceRoll);
+    
+    // ✅ Set nextRoll for human player
+    newGameState.nextRoll = {
+      white: humanPlayerColor === 'white' ? nextDiceRoll : null,
+      black: humanPlayerColor === 'black' ? nextDiceRoll : null,
+    };
+    
+    console.log('🎲 AI Done - Generated dice for human player:', nextDiceRoll);
+    console.log('📋 nextRoll:', JSON.stringify(newGameState.nextRoll));
 
     // Update game state in database
     await this.prisma.game.update({
@@ -1377,5 +1465,98 @@ export class GameService {
       total: leaderboard.length,
       period,
     };
+  }
+
+  // ==========================================
+  // 🔐 ANTI-CHEAT: Winner First Dice System
+  // ==========================================
+
+  /**
+   * Generate first dice for opening roll winner
+   * This is called ONCE after opening roll completes
+   * Prevents refresh-to-get-better-dice exploit
+   * 
+   * ✅ NEW: Stores in nextRoll.{winner} instead of firstDiceRoll
+   */
+  /**
+   * Complete opening roll and generate dice for winner
+   */
+  async completeOpeningRoll(gameId: string, winner: 'white' | 'black') {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    const gameState = game.gameState as any;
+
+    // ✅ ALWAYS generate dice for winner (like opponent pressed Done for them)
+    const nextPlayerDice = this.generateDice();
+    console.log(`🎲 [Opening] Generating dice for winner ${winner}:`, nextPlayerDice);
+
+    const updatedNextRoll = {
+      white: winner === 'white' ? nextPlayerDice : null,
+      black: winner === 'black' ? nextPlayerDice : null,
+    };
+
+    console.log(`📋 nextRoll:`, JSON.stringify(updatedNextRoll));
+
+    const updatedGameState = {
+      ...gameState,
+      currentPlayer: winner,
+      phase: 'waiting',
+      turnCompleted: true,
+      nextRoll: updatedNextRoll,
+      nextDiceRoll: nextPlayerDice,
+      diceValues: [],
+    };
+
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        gameState: updatedGameState,
+        updatedAt: new Date(),
+      },
+    });
+
+    return {
+      message: 'Opening roll completed',
+      winner,
+      nextRoll: updatedNextRoll,
+    };
+  }
+
+  /**
+   * Clear first dice when turn ends
+   * Next player will get their own fresh dice
+   * ⚠️ DEPRECATED: This function is no longer used
+   */
+  async clearFirstDice(gameId: string): Promise<void> {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    const gameState = game.gameState as any;
+
+    // Only update if firstDiceRoll exists
+    if (gameState.firstDiceRoll) {
+      console.log('🧹 Clearing first dice');
+      
+      await this.prisma.game.update({
+        where: { id: gameId },
+        data: {
+          gameState: {
+            ...gameState,
+            firstDiceRoll: null,
+          },
+        },
+      });
+    }
   }
 }
