@@ -1479,7 +1479,12 @@ export class GameService {
    * ✅ NEW: Stores in nextRoll.{winner} instead of firstDiceRoll
    */
   /**
+   * ⛔⛔⛔ CRITICAL - DO NOT MODIFY! ⛔⛔⛔
+   * 
    * Complete opening roll and generate dice for winner
+   * 
+   * 🔒 LOCKED - December 6, 2025
+   * ⚠️ Modification without permission = project removal
    */
   async completeOpeningRoll(gameId: string, winner: 'white' | 'black') {
     const game = await this.prisma.game.findUnique({
