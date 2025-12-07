@@ -1,6 +1,6 @@
 {
   "name": "nard-backend",
-  "version": "1.0.0",
+  "version": "5.0.0",
   "description": "Nard Arena Backend API - Professional NestJS Backend",
   "author": "Nard Arena Team",
   "private": true,
