@@ -217,6 +217,14 @@ export class GameController {
     return this.gameService.canUserPlay(gameId, userId);
   }
 
+  @Get(':id/check-time')
+  @ApiOperation({ summary: 'Check if any player has run out of time' })
+  @ApiResponse({ status: 200, description: 'Returns time status for both players' })
+  async checkTime(@Req() req: any, @Param('id') gameId: string) {
+    const userId = req.user.userId;
+    return this.gameService.checkTimeStatus(gameId, userId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get game details with all moves' })
   @ApiResponse({ status: 200, description: 'Game found' })

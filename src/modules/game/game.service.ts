@@ -245,6 +245,50 @@ export class GameService {
     return game;
   }
 
+  /**
+   * ⏱️ Calculate current timer values based on lastDoneAt
+   * 
+   * RULES:
+   * - Timer counts from lastDoneAt (when opponent pressed Done OR opening winner declared)
+   * - Timer counts even if player hasn't rolled dice yet
+   * - Timer ONLY stops when player presses Done (then opponent timer starts)
+   */
+  private calculateCurrentTimers(game: any): { whiteTime: number; blackTime: number } {
+    const gameState = game.gameState as any;
+    const lastDoneBy = gameState.lastDoneBy?.toLowerCase(); // Who pressed Done last
+    const lastDoneAt = gameState.lastDoneAt;
+    const phase = gameState.phase;
+
+    let whiteTime = game.whiteTimeRemaining || 0;
+    let blackTime = game.blackTimeRemaining || 0;
+
+    // Timer counts if:
+    // 1. lastDoneAt exists (turn has started)
+    // 2. lastDoneBy exists (we know who pressed Done)
+    // 3. phase is 'playing' or 'waiting' or 'moving' (game in progress, not opening or game-over)
+    // 4. Active player's time > 0
+    //
+    // LOGIC: If white pressed Done → black timer counts
+    //        If black pressed Done → white timer counts
+    if (lastDoneAt && lastDoneBy && (phase === 'playing' || phase === 'waiting' || phase === 'moving') && (whiteTime > 0 || blackTime > 0)) {
+      const now = Date.now();
+      const lastDoneTime = new Date(lastDoneAt).getTime();
+      const elapsedSeconds = Math.floor((now - lastDoneTime) / 1000);
+
+      // Determine which timer should count (OPPOSITE of who pressed Done)
+      const activePlayer = lastDoneBy === 'white' ? 'black' : 'white';
+
+      // Subtract elapsed time ONLY from active player's timer
+      if (activePlayer === 'white' && whiteTime > 0) {
+        whiteTime = Math.max(0, whiteTime - elapsedSeconds);
+      } else if (activePlayer === 'black' && blackTime > 0) {
+        blackTime = Math.max(0, blackTime - elapsedSeconds);
+      }
+    }
+
+    return { whiteTime, blackTime };
+  }
+
   async recordMove(gameId: string, userId: string, recordMoveDto: RecordMoveDto) {
     // Verify game exists and user is a player
     const game = await this.prisma.game.findUnique({
@@ -295,9 +339,14 @@ export class GameService {
     // recordMove is called MULTIPLE times (once per move), we don't want to regenerate dice each time!
 
     // Update boardStateAfter WITHOUT generating new dice
+    // ⏱️ CRITICAL: Preserve lastDoneBy and lastDoneAt from existing gameState!
+    const existingGameState = game.gameState as any;
     const updatedBoardState = recordMoveDto.boardStateAfter 
       ? { 
           ...(recordMoveDto.boardStateAfter as any),
+          // ⏱️ Preserve timer fields from previous state
+          lastDoneBy: existingGameState.lastDoneBy,
+          lastDoneAt: existingGameState.lastDoneAt,
         }
       : game.gameState;
 
@@ -322,13 +371,6 @@ export class GameService {
     await this.prisma.game.update({
       where: { id: gameId },
       data: updateData,
-    });
-    
-    console.log('✅ Move recorded:', {
-      moveNumber: recordMoveDto.moveNumber,
-      from: recordMoveDto.from,
-      to: recordMoveDto.to,
-      gameStateUpdated: !!recordMoveDto.boardStateAfter,
     });
 
     // If this is an AI game and player just finished their turn, trigger AI move
@@ -419,6 +461,11 @@ export class GameService {
       throw new NotFoundException('Game not found');
     }
 
+    // 🏁 Don't roll dice if game is finished
+    if (game.status === 'COMPLETED' || game.winner) {
+      throw new BadRequestException('Game has ended - cannot roll dice');
+    }
+
     const gameState = game.gameState as any;
     const currentPlayer = gameState.currentPlayer;
     
@@ -467,6 +514,8 @@ export class GameService {
     ) {
       console.log(`🎲 [${currentPlayer}] Using nextRoll (FIRST ROLL after Done):`, playerNextRoll);
       console.log(`📋 nextRoll BEFORE use:`, JSON.stringify(gameState.nextRoll));
+      console.log(`⏱️ [BEFORE LOCK] gameState.lastDoneBy:`, gameState.lastDoneBy);
+      console.log(`⏱️ [BEFORE LOCK] gameState.lastDoneAt:`, gameState.lastDoneAt);
       
       const dice = playerNextRoll;
       
@@ -478,11 +527,21 @@ export class GameService {
             ...gameState,
             currentTurnDice: dice,
             turnCompleted: false,
+            lastDoneBy: gameState.lastDoneBy,
+            lastDoneAt: gameState.lastDoneAt,
           },
+          whiteHasDiceRolled: currentPlayer === 'white',
+          blackHasDiceRolled: currentPlayer === 'black',
+          currentDiceValues: dice,
         },
       });
       
       console.log(`✅ [${currentPlayer}] Dice locked as currentTurnDice for refresh protection`);
+      console.log(`⏱️ [AFTER LOCK] Saved to DB with lastDoneBy:`, gameState.lastDoneBy);
+      
+      // 🔍 DEBUG: Read back from DB to verify
+      const verifyGame = await this.prisma.game.findUnique({ where: { id: gameId } });
+      console.log(`🔍 [VERIFY] Read from DB - lastDoneBy:`, (verifyGame?.gameState as any)?.lastDoneBy);
       
       return {
         dice,
@@ -495,22 +554,40 @@ export class GameService {
     // 🎲 PRIORITY 2.5: Check nextDiceRoll (compatibility with old system)
     else if (gameState.nextDiceRoll && Array.isArray(gameState.nextDiceRoll) && gameState.nextDiceRoll.length === 2) {
       console.log(`🎲 [${currentPlayer}] Using nextDiceRoll:`, gameState.nextDiceRoll);
+      console.log(`⏱️ [BEFORE LOCK] gameState.lastDoneBy:`, gameState.lastDoneBy);
+      console.log(`⏱️ [BEFORE LOCK] gameState.lastDoneAt:`, gameState.lastDoneAt);
       
       const dice = gameState.nextDiceRoll as [number, number];
       
+      // ⏱️ CRITICAL: Preserve timer fields from CURRENT gameState
+      const preservedLastDoneBy = gameState.lastDoneBy;
+      const preservedLastDoneAt = gameState.lastDoneAt;
+      
       // ✅ CRITICAL: Save currentTurnDice so refresh returns same dice!
+      const updatedState = {
+        ...gameState,
+        currentTurnDice: dice,
+        turnCompleted: false,
+        lastDoneBy: preservedLastDoneBy,
+        lastDoneAt: preservedLastDoneAt,
+      };
+      
       await this.prisma.game.update({
         where: { id: gameId },
         data: {
-          gameState: {
-            ...gameState,
-            currentTurnDice: dice,
-            turnCompleted: false,
-          },
+          gameState: updatedState,
+          whiteHasDiceRolled: currentPlayer === 'white',
+          blackHasDiceRolled: currentPlayer === 'black',
+          currentDiceValues: dice,
         },
       });
       
       console.log(`✅ [${currentPlayer}] Dice locked as currentTurnDice for refresh protection`);
+      console.log(`⏱️ [AFTER LOCK] Saved to DB with lastDoneBy:`, gameState.lastDoneBy);
+      
+      // 🔍 DEBUG: Read back from DB to verify
+      const verifyGame = await this.prisma.game.findUnique({ where: { id: gameId } });
+      console.log(`🔍 [VERIFY] Read from DB - lastDoneBy:`, (verifyGame?.gameState as any)?.lastDoneBy);
       
       return {
         dice,
@@ -535,7 +612,12 @@ export class GameService {
             ...gameState,
             currentTurnDice: dice,
             turnCompleted: false,
+            lastDoneBy: gameState.lastDoneBy,
+            lastDoneAt: gameState.lastDoneAt,
           },
+          whiteHasDiceRolled: currentPlayer === 'white',
+          blackHasDiceRolled: currentPlayer === 'black',
+          currentDiceValues: dice,
         },
       });
       
@@ -625,17 +707,28 @@ export class GameService {
       nextDiceRoll: nextPlayerDice, // ✅ ALSO save to nextDiceRoll for compatibility
     };
 
-    // ✅ Get latest timers from gameState if available
-    const whiteTime = gameState.remainingTime?.white;
-    const blackTime = gameState.remainingTime?.black;
+    // ⏱️ Calculate CURRENT timer values (with elapsed time subtracted)
+    const { whiteTime, blackTime } = this.calculateCurrentTimers(game);
+    
+    console.log('⏱️ Timer Update on Done:', {
+      player: playerColor,
+      whiteTime,
+      blackTime,
+      lastDoneAt: gameState.lastDoneAt,
+      currentPlayer: gameState.currentPlayer,
+    });
 
     const updatedGame = await this.prisma.game.update({
       where: { id: gameId },
       data: {
         gameState: updatedGameState,
-        whiteTimeRemaining: whiteTime !== undefined ? whiteTime : game.whiteTimeRemaining,
-        blackTimeRemaining: blackTime !== undefined ? blackTime : game.blackTimeRemaining,
+        // ✅ Save calculated timers (NOT from frontend)
+        whiteTimeRemaining: whiteTime,
+        blackTimeRemaining: blackTime,
         updatedAt: new Date(),
+        whiteHasDiceRolled: false, // ✅ Clear both flags when Done pressed
+        blackHasDiceRolled: false,
+        currentDiceValues: undefined, // ✅ Clear current dice values
       },
       include: {
         whitePlayer: true,
@@ -644,6 +737,15 @@ export class GameService {
           orderBy: { createdAt: 'asc' },
         },
       },
+    });
+    
+    console.log('✅ [endTurn] Game updated in DB:', {
+      gameId: updatedGame.id,
+      lastDoneBy: (updatedGame.gameState as any).lastDoneBy,
+      lastDoneAt: (updatedGame.gameState as any).lastDoneAt,
+      phase: (updatedGame.gameState as any).phase,
+      whiteTime: updatedGame.whiteTimeRemaining,
+      blackTime: updatedGame.blackTimeRemaining,
     });
 
     return {
@@ -771,14 +873,14 @@ export class GameService {
       throw new ForbiddenException('You are not a player in this game');
     }
 
-    // 🔍 DEBUG: Log nextRoll from database
-    console.log('🔍 [getGame] Reading from database:');
-    console.log('  gameId:', gameId);
-    console.log('  nextRoll:', JSON.stringify((game.gameState as any)?.nextRoll));
-    console.log('  nextDiceRoll:', JSON.stringify((game.gameState as any)?.nextDiceRoll));
-    console.log('  currentTurnDice:', JSON.stringify((game.gameState as any)?.currentTurnDice));
-
-    return game;
+    // ⏱️ Calculate current timers and add to response
+    const { whiteTime, blackTime } = this.calculateCurrentTimers(game);
+    
+    return {
+      ...game,
+      whiteTimeRemaining: whiteTime,
+      blackTimeRemaining: blackTime,
+    };
   }
 
   async getUserGameHistory(userId: string, limit: number = 20, offset: number = 0) {
@@ -1010,11 +1112,20 @@ export class GameService {
       throw new ForbiddenException('Not a player in this game');
     }
 
-    // Merge dice values into game state
+    // ⏱️ CRITICAL FIX: Preserve existing timer fields from DB!
+    const existingGameState = game.gameState as any;
+    
+    // Merge dice values into game state, but PRESERVE lastDoneBy/lastDoneAt
     const updatedGameState = {
-      ...syncStateDto.gameState,
+      ...existingGameState, // ✅ Start with existing state (includes lastDoneBy/lastDoneAt)
+      ...syncStateDto.gameState, // ✅ Then merge incoming changes
       diceValues: syncStateDto.diceValues || [],
+      // ⏱️ FORCE preserve timer fields (in case frontend accidentally sends undefined)
+      lastDoneBy: existingGameState.lastDoneBy,
+      lastDoneAt: existingGameState.lastDoneAt,
     };
+
+    console.log('⏱️ [syncGameState] Preserving lastDoneBy:', existingGameState.lastDoneBy);
 
     // Update game state
     await this.prisma.game.update({
@@ -1048,11 +1159,23 @@ export class GameService {
       throw new ForbiddenException('Not a player in this game');
     }
 
+    // ⏱️ CRITICAL FIX: Preserve timer fields from existing state!
+    const existingGameState = game.gameState as any;
+    const mergedGameState = {
+      ...existingGameState, // Start with existing (includes lastDoneBy/lastDoneAt)
+      ...newGameState, // Merge incoming changes
+      // ⏱️ Force preserve timer fields
+      lastDoneBy: existingGameState.lastDoneBy,
+      lastDoneAt: existingGameState.lastDoneAt,
+    };
+
+    console.log('⏱️ [updateGameState] Preserving lastDoneBy:', existingGameState.lastDoneBy);
+
     // Update game state without creating a move
     const updatedGame = await this.prisma.game.update({
       where: { id: gameId },
       data: {
-        gameState: newGameState,
+        gameState: mergedGameState,
         updatedAt: new Date(),
       },
       include: {
@@ -1084,7 +1207,13 @@ export class GameService {
    * AI automatically makes its move
    */
   async makeAIMove(gameId: string) {
-    const game = await this.prisma.game.findUnique({
+    console.log('🤖 [AI] Starting move...');
+    
+    // ⏱️ CRITICAL: Wait for any pending dice lock operations to complete
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // 🔄 CRITICAL: ALWAYS fetch fresh state from DB (don't trust memory)
+    let game = await this.prisma.game.findUnique({
       where: { id: gameId },
     });
 
@@ -1092,41 +1221,28 @@ export class GameService {
       throw new NotFoundException('Game not found');
     }
 
+    // 🏁 Don't make AI move if game is finished
+    if (game.status === 'COMPLETED' || game.winner) {
+      console.log('🏁 [AI] Game already finished - skipping AI move');
+      return;
+    }
+
     if (game.gameType !== 'AI') {
       throw new BadRequestException('This is not an AI game');
     }
-
-    console.log('🔍 Game status check:', {
-      status: game.status,
-      gameType: game.gameType,
-      gameId: game.id,
-    });
 
     if (game.status !== 'ACTIVE') {
       throw new BadRequestException('Game is not active');
     }
 
-    const gameState = game.gameState as any;
-    
-    console.log('🔍 AI makeMove - gameState dice check:', {
-      nextDiceRoll: gameState.nextDiceRoll,
-      diceValues: gameState.diceValues,
-      currentTurnDice: gameState.currentTurnDice,
-    });
+    let gameState = game.gameState as any;
+    console.log('🔄 [AI] Initial game state - lastDoneBy:', gameState.lastDoneBy);
     
     // ✅ Determine AI color from player IDs (AI_PLAYER_ID = white or black)
     const isWhiteAI = game.whitePlayerId === this.AI_PLAYER_ID;
     const isBlackAI = game.blackPlayerId === this.AI_PLAYER_ID;
     const aiColor = isWhiteAI ? 'white' : 'black';
     const currentPlayer = (gameState.currentPlayer || 'white').toLowerCase();
-    
-    console.log('🔍 Checking AI turn:', {
-      currentPlayer,
-      aiColor,
-      whitePlayerId: game.whitePlayerId,
-      blackPlayerId: game.blackPlayerId,
-      AI_PLAYER_ID: this.AI_PLAYER_ID,
-    });
     
     // Check if it's AI's turn (case-insensitive)
     if (currentPlayer !== aiColor) {
@@ -1149,6 +1265,7 @@ export class GameService {
       console.log('🎲 AI using pre-generated dice (nextDiceRoll):', diceRoll);
       
       // ✅ LOCK IT IMMEDIATELY in database before doing anything else
+      // ⏱️ CRITICAL: Preserve lastDoneBy and lastDoneAt when locking dice!
       await this.prisma.game.update({
         where: { id: gameId },
         data: {
@@ -1157,19 +1274,30 @@ export class GameService {
             currentTurnDice: diceRoll,
             diceValues: diceRoll,
             phase: 'moving',
+            // ⏱️ Preserve timer fields!
+            lastDoneBy: gameState.lastDoneBy,
+            lastDoneAt: gameState.lastDoneAt,
           },
         },
       });
-      console.log('🔒 Dice LOCKED in database:', diceRoll);
+      
     }
     // PRIORITY 3: Use existing diceValues
     else if (gameState.diceValues && gameState.diceValues.length >= 2) {
       diceRoll = [gameState.diceValues[0], gameState.diceValues[1]];
-      console.log('🎲 AI using existing diceValues:', diceRoll);
     }
     // PRIORITY 4: ERROR - Should never reach here
     else {
       throw new BadRequestException('No dice available for AI - this should not happen!');
+    }
+    
+    // ⏱️ CRITICAL: Re-fetch AGAIN to get absolute latest state (after dice operations)
+    game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+    if (game) {
+      gameState = game.gameState as any;
+      console.log('🔄 [AI] Game state refreshed AGAIN - lastDoneBy:', gameState.lastDoneBy);
     }
 
     // Get AI difficulty from game state
@@ -1180,10 +1308,9 @@ export class GameService {
 
     // Convert frontend board state format to AI format
     const boardState = this.convertToAIFormat(gameState);
-    console.log('🔄 Converted board state for AI:', JSON.stringify(boardState, null, 2));
 
     const moves = await this.aiPlayerService.makeMove(boardState, diceRoll, difficulty);
-    console.log('🤖 AI calculated moves:', moves);
+    console.log('🤖 AI moves:', moves.length, 'calculated');
 
     // Apply moves to board state (AI format)
     let currentBoard = { ...boardState };
@@ -1229,6 +1356,22 @@ export class GameService {
     // Convert back to frontend format
     const newGameState = this.convertFromAIFormat(currentBoard, gameState);
     
+    // ⏱️ CRITICAL: Preserve lastDoneBy and lastDoneAt from previous state BEFORE calculation
+    // This is needed so calculateCurrentTimers can compute AI's elapsed time
+    newGameState.lastDoneBy = gameState.lastDoneBy;
+    newGameState.lastDoneAt = gameState.lastDoneAt;
+    
+    // ⏱️ STEP 1: Calculate timers BEFORE updating lastDoneBy/lastDoneAt
+    // This ensures AI's elapsed time is captured
+    const { whiteTime, blackTime } = this.calculateCurrentTimers(game);
+    
+    console.log('⏱️ [AI Timer]:', {
+      lastDoneBy: gameState.lastDoneBy,
+      whiteTime,
+      blackTime,
+    });
+    
+    // ⏱️ STEP 2: NOW update lastDoneBy/lastDoneAt (for next turn)
     // ✅ Switch turn to human player after AI moves
     const humanPlayerColor = aiColor === 'white' ? 'black' : 'white';
     newGameState.currentPlayer = humanPlayerColor;
@@ -1238,8 +1381,8 @@ export class GameService {
     
     // ✅ Mark turn as completed (AI finished its turn)
     newGameState.turnCompleted = true;
-    newGameState.lastDoneBy = aiColor;
-    newGameState.lastDoneAt = new Date().toISOString();
+    newGameState.lastDoneBy = aiColor;  // AI pressed "Done"
+    newGameState.lastDoneAt = new Date().toISOString();  // NOW (starts human timer)
 
     // 🎲 AI Done → Generate dice for human player (same as endTurn does)
     const nextDiceRoll = this.generateDice();
@@ -1251,36 +1394,16 @@ export class GameService {
       black: humanPlayerColor === 'black' ? nextDiceRoll : null,
     };
     
-    console.log('🎲 AI Done - Generated dice for human player:', nextDiceRoll);
-    console.log('📋 nextRoll:', JSON.stringify(newGameState.nextRoll));
-
-    // ✅ Calculate AI timer - subtract elapsed time since lastDoneAt
-    let aiTimeRemaining: number = aiColor === 'white' ? (game.whiteTimeRemaining || 0) : (game.blackTimeRemaining || 0);
-    
-    if (gameState.lastDoneAt && aiTimeRemaining > 0) {
-      const now = Date.now();
-      const lastDoneTime = new Date(gameState.lastDoneAt).getTime();
-      const elapsedSeconds = Math.floor((now - lastDoneTime) / 1000);
-      
-      // Subtract AI's thinking time
-      aiTimeRemaining = Math.max(0, aiTimeRemaining - elapsedSeconds);
-      
-      console.log(`⏱️ AI timer updated:`, {
-        aiColor,
-        previousTime: aiColor === 'white' ? game.whiteTimeRemaining : game.blackTimeRemaining,
-        elapsedSeconds,
-        newTime: aiTimeRemaining,
-      });
-    }
+    console.log('✅ [AI Done] Timer saved - white:', whiteTime, 'black:', blackTime);
 
     // Update game state in database
     await this.prisma.game.update({
       where: { id: gameId },
       data: {
         gameState: newGameState,
-        // ✅ Update AI's timer
-        whiteTimeRemaining: aiColor === 'white' ? aiTimeRemaining : game.whiteTimeRemaining,
-        blackTimeRemaining: aiColor === 'black' ? aiTimeRemaining : game.blackTimeRemaining,
+        // ✅ Save calculated timers (server calculates, not frontend)
+        whiteTimeRemaining: whiteTime,
+        blackTimeRemaining: blackTime,
         updatedAt: new Date(),
       },
     });
@@ -1641,15 +1764,29 @@ export class GameService {
 
     console.log(`📋 nextRoll structure:`, JSON.stringify(updatedNextRoll));
 
+    // ⏱️ CRITICAL: Set lastDoneBy to LOSER so winner's timer starts counting
+    // Logic: If white won opening → lastDoneBy = 'black' → white timer counts
+    const loser = winner === 'white' ? 'black' : 'white';
+
     const updatedGameState = {
       ...gameState,
       currentPlayer: winner,
-      phase: 'waiting',
-      turnCompleted: true,
+      phase: 'playing', // ⏱️ Game is now playing, timer should count
+      turnCompleted: false, // ⏱️ Player hasn't finished their turn yet
       nextRoll: updatedNextRoll,
       nextDiceRoll: nextPlayerDice,
       diceValues: [],
+      lastDoneAt: new Date().toISOString(), // ⏱️ Timer starts NOW when opening winner is determined
+      lastDoneBy: loser, // ⏱️ Set to loser so winner's timer starts
     };
+
+    console.log('⏱️ Opening roll complete - Timer setup:', {
+      winner,
+      loser,
+      lastDoneBy: loser,
+      lastDoneAt: updatedGameState.lastDoneAt,
+      message: `${winner} timer will start counting`,
+    });
 
     await this.prisma.game.update({
       where: { id: gameId },
@@ -1697,4 +1834,70 @@ export class GameService {
       });
     }
   }
+
+  /**
+   * ⏱️ Check time status for both players
+   * Returns current time remaining and whether anyone has run out of time
+   */
+  async checkTimeStatus(gameId: string, userId: string) {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+      include: {
+        whitePlayer: true,
+        blackPlayer: true,
+      },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    // Check if user is a player in this game
+    const isWhitePlayer = game.whitePlayerId === userId;
+    const isBlackPlayer = game.blackPlayerId === userId;
+
+    if (!isWhitePlayer && !isBlackPlayer) {
+      throw new ForbiddenException('You are not a player in this game');
+    }
+
+    const gameState = game.gameState as any;
+    const currentPlayer = gameState.currentPlayer?.toLowerCase() || 'white';
+    const lastDoneAt = gameState.lastDoneAt;
+
+    let whiteTime = game.whiteTimeRemaining || 0;
+    let blackTime = game.blackTimeRemaining || 0;
+
+    // Calculate elapsed time for current player
+    if (lastDoneAt) {
+      const now = Date.now();
+      const lastDoneTime = new Date(lastDoneAt).getTime();
+      const elapsedSeconds = Math.floor((now - lastDoneTime) / 1000);
+
+      if (currentPlayer === 'white') {
+        whiteTime = Math.max(0, whiteTime - elapsedSeconds);
+      } else if (currentPlayer === 'black') {
+        blackTime = Math.max(0, blackTime - elapsedSeconds);
+      }
+    }
+
+    const whiteTimeUp = whiteTime <= 0;
+    const blackTimeUp = blackTime <= 0;
+    let winner: 'white' | 'black' | null = null;
+
+    // ✅ If someone's time is up, determine winner (but don't end game here - frontend will call endGame with full details)
+    if (whiteTimeUp || blackTimeUp) {
+      winner = whiteTimeUp ? 'black' : 'white';
+    }
+
+    return {
+      whiteTime,
+      blackTime,
+      whiteTimeUp,
+      blackTimeUp,
+      winner,
+      currentPlayer,
+      gameStatus: game.status, // Return actual game status (frontend will end game)
+    };
+  }
 }
+

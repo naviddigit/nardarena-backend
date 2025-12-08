@@ -173,6 +173,11 @@ model Game {
   openingDiceBlack  Int?        // Opening roll for black (1-6)
   firstRollDice     Json?       // First 2d6 after opening winner determined [n, n]
   
+  // 🎲 Dice roll state tracking (for page refresh restoration)
+  whiteHasDiceRolled Boolean    @default(false) // Whether white player has rolled dice this turn
+  blackHasDiceRolled Boolean    @default(false) // Whether black player has rolled dice this turn
+  currentDiceValues  Json?      // Current dice values on board [n, n] (null after Done)
+  
   // Game result
   status            GameStatus  @default(ACTIVE)
   winner            PlayerColor?
