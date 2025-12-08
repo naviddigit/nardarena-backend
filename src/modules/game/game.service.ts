@@ -1209,6 +1209,9 @@ export class GameService {
   async makeAIMove(gameId: string) {
     console.log('🤖 [AI] Starting move...');
     
+    // ⏱️ CRITICAL: Capture AI turn start time (for accurate timer calculation)
+    const aiTurnStartTime = new Date().toISOString();
+    
     // ⏱️ CRITICAL: Wait for any pending dice lock operations to complete
     await new Promise(resolve => setTimeout(resolve, 200));
     
@@ -1382,7 +1385,10 @@ export class GameService {
     // ✅ Mark turn as completed (AI finished its turn)
     newGameState.turnCompleted = true;
     newGameState.lastDoneBy = aiColor;  // AI pressed "Done"
-    newGameState.lastDoneAt = new Date().toISOString();  // NOW (starts human timer)
+    // ⏱️ CRITICAL FIX: Use AI turn START time, not END time!
+    // This way human timer starts from when AI's turn began, not when it ended
+    // Otherwise human loses extra seconds equal to AI's thinking time
+    newGameState.lastDoneAt = aiTurnStartTime;  // AI turn START (not NOW!)
 
     // 🎲 AI Done → Generate dice for human player (same as endTurn does)
     const nextDiceRoll = this.generateDice();
