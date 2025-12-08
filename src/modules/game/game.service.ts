@@ -723,18 +723,9 @@ export class GameService {
     // Switch player
     const nextPlayer = currentPlayer === 'white' ? 'black' : 'white';
     
-    // ✅ ALWAYS generate dice for next player (whoever's turn is next gets dice)
-    let nextPlayerDice: [number, number];
-    
-    if (gameState.nextDiceRoll && Array.isArray(gameState.nextDiceRoll) && gameState.nextDiceRoll.length === 2) {
-      // ✅ Use existing nextDiceRoll - DON'T generate new!
-      nextPlayerDice = gameState.nextDiceRoll as [number, number];
-      console.log(`🔒 [${playerColor}] Done pressed - Using nextDiceRoll for ${nextPlayer}:`, nextPlayerDice);
-    } else {
-      // ✅ Generate new dice
-      nextPlayerDice = this.generateDice();
-      console.log(`🎲 [${playerColor}] Done pressed - Generating NEW dice for ${nextPlayer}:`, nextPlayerDice);
-    }
+    // 🎲 ALWAYS generate NEW random dice for next player on EVERY Done press
+    const nextPlayerDice = this.generateDice();
+    console.log(`🎲 [${playerColor}] Done pressed - Generating NEW random dice for ${nextPlayer}:`, nextPlayerDice);
 
     // ✅ CRITICAL: nextRoll should have dice for NEXT player, NOT current player!
     // If white pressed Done → nextPlayer is black → black gets dice
