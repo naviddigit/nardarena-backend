@@ -1241,6 +1241,35 @@ export class GameService {
     let gameState = game.gameState as any;
     console.log('🔄 [AI] Initial game state - lastDoneBy:', gameState.lastDoneBy);
     
+    // ⏱️ CRITICAL FIX: Calculate and SAVE AI's timer BEFORE AI starts playing!
+    // This ensures AI's thinking time doesn't affect human player's timer
+    const timerBeforeAIMove = this.calculateCurrentTimers(game);
+    console.log('⏱️ [AI BEFORE] Saving AI timer before move:', {
+      lastDoneBy: gameState.lastDoneBy,
+      whiteTime: timerBeforeAIMove.whiteTime,
+      blackTime: timerBeforeAIMove.blackTime,
+    });
+    
+    // ⏱️ Save these timers now, before AI does anything
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        whiteTimeRemaining: timerBeforeAIMove.whiteTime,
+        blackTimeRemaining: timerBeforeAIMove.blackTime,
+      },
+    });
+    
+    // ⏱️ Re-fetch to get updated timers
+    game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+    
+    if (!game) {
+      throw new NotFoundException('Game not found after timer update');
+    }
+    
+    gameState = game.gameState as any;
+    
     // ✅ Determine AI color from player IDs (AI_PLAYER_ID = white or black)
     const isWhiteAI = game.whitePlayerId === this.AI_PLAYER_ID;
     const isBlackAI = game.blackPlayerId === this.AI_PLAYER_ID;
@@ -1359,22 +1388,7 @@ export class GameService {
     // Convert back to frontend format
     const newGameState = this.convertFromAIFormat(currentBoard, gameState);
     
-    // ⏱️ CRITICAL: Preserve lastDoneBy and lastDoneAt from previous state BEFORE calculation
-    // This is needed so calculateCurrentTimers can compute AI's elapsed time
-    newGameState.lastDoneBy = gameState.lastDoneBy;
-    newGameState.lastDoneAt = gameState.lastDoneAt;
-    
-    // ⏱️ STEP 1: Calculate timers BEFORE updating lastDoneBy/lastDoneAt
-    // This ensures AI's elapsed time is captured
-    const { whiteTime, blackTime } = this.calculateCurrentTimers(game);
-    
-    console.log('⏱️ [AI Timer]:', {
-      lastDoneBy: gameState.lastDoneBy,
-      whiteTime,
-      blackTime,
-    });
-    
-    // ⏱️ STEP 2: NOW update lastDoneBy/lastDoneAt (for next turn)
+    // ⏱️ STEP 1: NOW update lastDoneBy/lastDoneAt (for next turn)
     // ✅ Switch turn to human player after AI moves
     const humanPlayerColor = aiColor === 'white' ? 'black' : 'white';
     newGameState.currentPlayer = humanPlayerColor;
@@ -1400,16 +1414,13 @@ export class GameService {
       black: humanPlayerColor === 'black' ? nextDiceRoll : null,
     };
     
-    console.log('✅ [AI Done] Timer saved - white:', whiteTime, 'black:', blackTime);
+    console.log('✅ [AI Done] Timer already saved before AI move');
 
-    // Update game state in database
+    // Update game state in database (timers already updated at start of makeAIMove)
     await this.prisma.game.update({
       where: { id: gameId },
       data: {
         gameState: newGameState,
-        // ✅ Save calculated timers (server calculates, not frontend)
-        whiteTimeRemaining: whiteTime,
-        blackTimeRemaining: blackTime,
         updatedAt: new Date(),
       },
     });
