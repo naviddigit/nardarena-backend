@@ -9,11 +9,13 @@ import { GameService } from '../game/game.service';
 import { GameController } from '../game/game.controller';
 import { AIPlayerService } from '../game/ai/ai-player.service';
 import { DiceService } from '../game/dice.service';
+import { OpeningRollService } from '../game/core/opening-roll.service';
+import { AIMoveService } from '../game/core/ai-move.service';
 
 @Module({
   imports: [AuthModule, DatabaseModule, SettingsModule],
   controllers: [GamesController, GameController],
-  providers: [GamesService, GameService, GameGateway, AIPlayerService, DiceService],
-  exports: [GamesService, GameService, AIPlayerService, DiceService],
+  providers: [GamesService, GameService, GameGateway, AIPlayerService, DiceService, OpeningRollService, AIMoveService],
+  exports: [GamesService, GameService, AIPlayerService, DiceService, OpeningRollService, AIMoveService],
 })
 export class GamesModule {}

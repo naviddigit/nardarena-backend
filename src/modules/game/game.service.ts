@@ -61,6 +61,8 @@ import { RecordMoveDto } from './dto/record-move.dto';
 import { EndGameDto } from './dto/end-game.dto';
 import { AIPlayerService, AIDifficulty } from './ai/ai-player.service';
 import { SettingsService } from '../settings/settings.service';
+import { OpeningRollService } from './core/opening-roll.service';
+import { AIMoveService } from './core/ai-move.service';
 
 @Injectable()
 export class GameService {
@@ -68,6 +70,8 @@ export class GameService {
     private prisma: PrismaService,
     private aiPlayerService: AIPlayerService,
     private settingsService: SettingsService,
+    private openingRollService: OpeningRollService,
+    private aiMoveService: AIMoveService,
   ) {}
 
   // AI Player ID (system user for AI games)
@@ -246,12 +250,29 @@ export class GameService {
   }
 
   /**
-   * ⏱️ Calculate current timer values based on lastDoneAt
+   * ⏱️🔒 LOCKED - TIMER CALCULATION ALGORITHM (Dec 8, 2025)
+   * ================================================================
+   * ⚠️ DO NOT MODIFY THIS METHOD WITHOUT EXPLICIT APPROVAL!
+   * 
+   * Algorithm:
+   * 1. Read lastDoneBy from gameState (who pressed Done last)
+   * 2. Read lastDoneAt from gameState (when they pressed Done)
+   * 3. Get current server time (NOW)
+   * 4. Calculate elapsed: NOW - lastDoneAt (in seconds)
+   * 5. Subtract elapsed from OPPOSITE player's timer
+   * 
+   * Logic:
+   * - If white pressed Done → black's timer counts → subtract from blackTime
+   * - If black pressed Done → white's timer counts → subtract from whiteTime
    * 
    * RULES:
    * - Timer counts from lastDoneAt (when opponent pressed Done OR opening winner declared)
    * - Timer counts even if player hasn't rolled dice yet
    * - Timer ONLY stops when player presses Done (then opponent timer starts)
+   * - Returns calculated values - does NOT save to database!
+   * 
+   * ⛔ LOCKED after months of debugging - DO NOT TOUCH!
+   * ================================================================
    */
   private calculateCurrentTimers(game: any): { whiteTime: number; blackTime: number } {
     const gameState = game.gameState as any;
@@ -262,29 +283,52 @@ export class GameService {
     let whiteTime = game.whiteTimeRemaining || 0;
     let blackTime = game.blackTimeRemaining || 0;
 
+    console.log('⏱️ [calculateCurrentTimers] INPUT:', {
+      whiteTimeDB: whiteTime,
+      blackTimeDB: blackTime,
+      lastDoneBy,
+      lastDoneAt,
+      phase,
+    });
+
     // Timer counts if:
     // 1. lastDoneAt exists (turn has started)
     // 2. lastDoneBy exists (we know who pressed Done)
     // 3. phase is 'playing' or 'waiting' or 'moving' (game in progress, not opening or game-over)
-    // 4. Active player's time > 0
     //
     // LOGIC: If white pressed Done → black timer counts
     //        If black pressed Done → white timer counts
-    if (lastDoneAt && lastDoneBy && (phase === 'playing' || phase === 'waiting' || phase === 'moving') && (whiteTime > 0 || blackTime > 0)) {
+    //
+    // ⚠️ DO NOT check if time > 0 - we need to track negative/zero time for timeout!
+    if (lastDoneAt && lastDoneBy && (phase === 'playing' || phase === 'waiting' || phase === 'moving')) {
       const now = Date.now();
       const lastDoneTime = new Date(lastDoneAt).getTime();
       const elapsedSeconds = Math.floor((now - lastDoneTime) / 1000);
 
+      console.log('⏱️ [calculateCurrentTimers] CALCULATING:', {
+        now,
+        lastDoneTime,
+        elapsedSeconds,
+        activePlayer: lastDoneBy === 'white' ? 'black' : 'white',
+      });
+
       // Determine which timer should count (OPPOSITE of who pressed Done)
       const activePlayer = lastDoneBy === 'white' ? 'black' : 'white';
 
-      // Subtract elapsed time ONLY from active player's timer
-      if (activePlayer === 'white' && whiteTime > 0) {
+      // Subtract elapsed time from active player's timer (can go negative for timeout detection)
+      if (activePlayer === 'white') {
         whiteTime = Math.max(0, whiteTime - elapsedSeconds);
-      } else if (activePlayer === 'black' && blackTime > 0) {
+      } else if (activePlayer === 'black') {
         blackTime = Math.max(0, blackTime - elapsedSeconds);
       }
+    } else {
+      console.log('⏱️ [calculateCurrentTimers] SKIPPED - conditions not met');
     }
+
+    console.log('⏱️ [calculateCurrentTimers] OUTPUT:', {
+      whiteTime,
+      blackTime,
+    });
 
     return { whiteTime, blackTime };
   }
@@ -647,8 +691,11 @@ export class GameService {
       throw new NotFoundException('Game not found');
     }
 
-    // Verify user is a player
-    if (game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
+    const AI_PLAYER_ID = '00000000-0000-0000-0000-000000000000';
+    const isAIGame = game.gameType === 'AI';
+    
+    // Verify user is a player (skip for AI games since frontend calls this for AI)
+    if (!isAIGame && game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
       throw new ForbiddenException('Not a player in this game');
     }
 
@@ -656,11 +703,19 @@ export class GameService {
     const currentPlayer = gameState.currentPlayer;
 
     // Verify it's this player's turn
-    const isWhitePlayer = game.whitePlayerId === userId;
-    const playerColor = isWhitePlayer ? 'white' : 'black';
+    // For AI games: determine player color (human is opposite of AI)
+    let playerColor: 'white' | 'black';
     
-    if (currentPlayer !== playerColor) {
-      throw new BadRequestException('Not your turn');
+    if (isAIGame) {
+      const isWhiteAI = game.whitePlayerId === AI_PLAYER_ID;
+      playerColor = currentPlayer; // In AI game, whoever's turn it is can call Done
+    } else {
+      const isWhitePlayer = game.whitePlayerId === userId;
+      playerColor = isWhitePlayer ? 'white' : 'black';
+      
+      if (currentPlayer !== playerColor) {
+        throw new BadRequestException('Not your turn');
+      }
     }
 
     console.log(`✅ [${playerColor}] pressed Done - ending turn`);
@@ -717,6 +772,71 @@ export class GameService {
       lastDoneAt: gameState.lastDoneAt,
       currentPlayer: gameState.currentPlayer,
     });
+
+    // ⏱️ TIMEOUT DETECTION - Check if any timer reached 0
+    if (whiteTime <= 0 || blackTime <= 0) {
+      const winner = whiteTime <= 0 ? 'BLACK' : 'WHITE';
+      const loser = whiteTime <= 0 ? 'white' : 'black';
+      
+      console.log(`⏱️ [TIMEOUT DETECTED] ${loser} ran out of time! Winner: ${winner}`);
+      
+      // End game immediately with TIMEOUT reason
+      const setsToWin = 1; // AI game is single-set
+      const endGameData = {
+        winner,
+        whiteSetsWon: winner === 'WHITE' ? setsToWin : 0,
+        blackSetsWon: winner === 'BLACK' ? setsToWin : 0,
+        endReason: 'TIMEOUT' as any,
+        finalGameState: updatedGameState,
+      };
+      
+      // Update game to COMPLETED status
+      const completedGame = await this.prisma.game.update({
+        where: { id: gameId },
+        data: {
+          status: 'COMPLETED',
+          winner: endGameData.winner as any,
+          whiteSetsWon: endGameData.whiteSetsWon,
+          blackSetsWon: endGameData.blackSetsWon,
+          endReason: endGameData.endReason,
+          endedAt: new Date(),
+          gameState: endGameData.finalGameState,
+          whiteTimeRemaining: whiteTime,
+          blackTimeRemaining: blackTime,
+        },
+        include: {
+          whitePlayer: true,
+          blackPlayer: true,
+        },
+      });
+      
+      // Update user stats
+      const winnerUserId = winner === 'WHITE' ? game.whitePlayerId : game.blackPlayerId;
+      const loserUserId = winner === 'WHITE' ? game.blackPlayerId : game.whitePlayerId;
+      
+      if (winnerUserId !== this.AI_PLAYER_ID) {
+        await this.updateUserStats(winnerUserId, true, setsToWin);
+      }
+      if (loserUserId !== this.AI_PLAYER_ID) {
+        await this.updateUserStats(loserUserId, false, setsToWin);
+      }
+      
+      console.log('✅ [TIMEOUT] Game ended and stats updated');
+      
+      // Return special response indicating timeout
+      return {
+        message: 'Game ended due to timeout',
+        timeout: true,
+        winner,
+        game: {
+          id: completedGame.id,
+          gameState: completedGame.gameState,
+          status: completedGame.status,
+          winner: completedGame.winner,
+          endReason: completedGame.endReason,
+        },
+      };
+    }
 
     const updatedGame = await this.prisma.game.update({
       where: { id: gameId },
@@ -873,12 +993,28 @@ export class GameService {
       throw new ForbiddenException('You are not a player in this game');
     }
 
-    // ⏱️ Return timers from database (already calculated and saved)
-    // Do NOT recalculate - this would override the saved values!
+    // ⏱️ Calculate current timers with elapsed time
+    // =================================================================
+    // CRITICAL: We MUST calculate elapsed time here!
+    // When client refreshes page, they call getGame() to get current state.
+    // Database has OLD timer values (from last endTurn/makeAIMove).
+    // If turn is active (lastDoneBy exists), we need to subtract elapsed time.
+    // =================================================================
+    
+    // ⚠️ Skip timer calculation if game is completed
+    let whiteTime = game.whiteTimeRemaining || 0;
+    let blackTime = game.blackTimeRemaining || 0;
+    
+    if (game.status !== 'COMPLETED' && !game.winner) {
+      const timers = this.calculateCurrentTimers(game);
+      whiteTime = timers.whiteTime;
+      blackTime = timers.blackTime;
+    }
+    
     return {
       ...game,
-      whiteTimeRemaining: game.whiteTimeRemaining,
-      blackTimeRemaining: game.blackTimeRemaining,
+      whiteTimeRemaining: whiteTime,
+      blackTimeRemaining: blackTime,
     };
   }
 
@@ -1203,211 +1339,17 @@ export class GameService {
   }
 
   /**
-   * AI automatically makes its move
+   * ⛔⛔⛔ DELEGATED TO ai-move.service.ts ⛔⛔⛔
+   * 
+   * AI move calculation and execution moved to separate service
+   * ⚠️ This now ONLY executes moves, does NOT call Done
+   * ⚠️ Frontend must call endTurn() after AI moves (like human)
+   * 
+   * File: core/ai-move.service.ts
    */
   async makeAIMove(gameId: string) {
-    console.log('🤖 [AI] Starting move...');
-    
-    // ⏱️ CRITICAL: Wait for any pending dice lock operations to complete
-    await new Promise(resolve => setTimeout(resolve, 200));
-    
-    // 🔄 CRITICAL: ALWAYS fetch fresh state from DB (don't trust memory)
-    let game = await this.prisma.game.findUnique({
-      where: { id: gameId },
-    });
-
-    if (!game) {
-      throw new NotFoundException('Game not found');
-    }
-
-    // 🏁 Don't make AI move if game is finished
-    if (game.status === 'COMPLETED' || game.winner) {
-      console.log('🏁 [AI] Game already finished - skipping AI move');
-      return;
-    }
-
-    if (game.gameType !== 'AI') {
-      throw new BadRequestException('This is not an AI game');
-    }
-
-    if (game.status !== 'ACTIVE') {
-      throw new BadRequestException('Game is not active');
-    }
-
-    let gameState = game.gameState as any;
-    
-    // ✅ Determine AI color from player IDs (AI_PLAYER_ID = white or black)
-    const isWhiteAI = game.whitePlayerId === this.AI_PLAYER_ID;
-    const isBlackAI = game.blackPlayerId === this.AI_PLAYER_ID;
-    const aiColor = isWhiteAI ? 'white' : 'black';
-    const currentPlayer = (gameState.currentPlayer || 'white').toLowerCase();
-    
-    // Check if it's AI's turn (case-insensitive)
-    if (currentPlayer !== aiColor) {
-      throw new BadRequestException(`Not AI turn - current: ${currentPlayer}, AI: ${aiColor}`);
-    }
-
-    // ✅ CRITICAL: Determine dice roll ONCE and save to database IMMEDIATELY
-    let diceRoll: [number, number];
-    
-    // PRIORITY 1: If currentTurnDice exists and matches current player, use it (already locked in)
-    if (gameState.currentTurnDice && gameState.currentTurnDice.length >= 2 && 
-        gameState.lastDoneBy !== aiColor) {
-      // This means AI already has locked dice from previous attempt
-      diceRoll = [gameState.currentTurnDice[0], gameState.currentTurnDice[1]];
-      console.log('🔒 AI using LOCKED dice (currentTurnDice):', diceRoll);
-    }
-    // PRIORITY 2: Use nextDiceRoll (pre-generated when opponent pressed Done)
-    else if (gameState.nextDiceRoll && gameState.nextDiceRoll.length >= 2) {
-      diceRoll = [gameState.nextDiceRoll[0], gameState.nextDiceRoll[1]];
-      console.log('🎲 AI using pre-generated dice (nextDiceRoll):', diceRoll);
-      
-      // ✅ LOCK IT IMMEDIATELY in database before doing anything else
-      // ⏱️ CRITICAL: Preserve lastDoneBy and lastDoneAt when locking dice!
-      await this.prisma.game.update({
-        where: { id: gameId },
-        data: {
-          gameState: {
-            ...gameState,
-            currentTurnDice: diceRoll,
-            diceValues: diceRoll,
-            phase: 'moving',
-            // ⏱️ Preserve timer fields!
-            lastDoneBy: gameState.lastDoneBy,
-            lastDoneAt: gameState.lastDoneAt,
-          },
-        },
-      });
-      
-    }
-    // PRIORITY 3: Use existing diceValues
-    else if (gameState.diceValues && gameState.diceValues.length >= 2) {
-      diceRoll = [gameState.diceValues[0], gameState.diceValues[1]];
-    }
-    // PRIORITY 4: ERROR - Should never reach here
-    else {
-      throw new BadRequestException('No dice available for AI - this should not happen!');
-    }
-    
-    // ⏱️ CRITICAL: Re-fetch AGAIN to get absolute latest state (after dice operations)
-    game = await this.prisma.game.findUnique({
-      where: { id: gameId },
-    });
-    if (game) {
-      gameState = game.gameState as any;
-      console.log('🔄 [AI] Game state refreshed AGAIN - lastDoneBy:', gameState.lastDoneBy);
-    }
-
-    // Get AI difficulty from game state
-    const difficulty = (gameState.aiDifficulty || 'MEDIUM') as AIDifficulty;
-
-    // Simulate thinking time
-    await this.aiPlayerService.simulateThinkingTime(difficulty);
-
-    // Convert frontend board state format to AI format
-    const boardState = this.convertToAIFormat(gameState);
-
-    const moves = await this.aiPlayerService.makeMove(boardState, diceRoll, difficulty);
-    console.log('🤖 AI moves:', moves.length, 'calculated');
-
-    // Apply moves to board state (AI format)
-    let currentBoard = { ...boardState };
-    let moveNumber = 1;
-    
-    // ✅ Get current move count from database
-    const existingMoves = await this.prisma.gameMove.findMany({
-      where: { gameId },
-      select: { moveNumber: true },
-      orderBy: { moveNumber: 'desc' },
-      take: 1,
-    });
-    
-    if (existingMoves.length > 0) {
-      moveNumber = existingMoves[0].moveNumber + 1;
-    }
-    
-    for (const move of moves) {
-      const boardBefore = JSON.parse(JSON.stringify(currentBoard));
-      currentBoard = this.applyMove(currentBoard, move);
-      const boardAfter = JSON.parse(JSON.stringify(currentBoard));
-      
-      // ✅ Record each AI move in database
-      await this.prisma.gameMove.create({
-        data: {
-          gameId,
-          playerColor: aiColor.toUpperCase() as 'WHITE' | 'BLACK',
-          moveNumber,
-          from: move.from,
-          to: move.to,
-          diceUsed: Math.abs(move.to - move.from),
-          isHit: false,
-          boardStateBefore: boardBefore,
-          boardStateAfter: boardAfter,
-          timeRemaining: 0,
-          moveTime: 0,
-        },
-      });
-      
-      moveNumber++;
-    }
-
-    // Convert back to frontend format
-    const newGameState = this.convertFromAIFormat(currentBoard, gameState);
-    
-    // ⏱️ STEP 1: Calculate AI's elapsed time BEFORE switching turn
-    // At this point: lastDoneBy = human, so AI's timer has been counting
-    const currentTimers = this.calculateCurrentTimers(game);
-    
-    console.log('⏱️ [AI Done] Timers with AI elapsed time:', {
-      whiteTime: currentTimers.whiteTime,
-      blackTime: currentTimers.blackTime,
-      lastDoneBy: gameState.lastDoneBy,
-      aiColor,
-    });
-    
-    // ⏱️ STEP 2: NOW switch turn (set lastDoneBy to AI)
-    // ✅ Switch turn to human player after AI moves
-    const humanPlayerColor = aiColor === 'white' ? 'black' : 'white';
-    newGameState.currentPlayer = humanPlayerColor;
-    newGameState.currentTurnDice = []; // ✅ CLEAR so human gets fresh dice from nextRoll
-    newGameState.diceValues = [];
-    newGameState.phase = 'waiting';
-    
-    // ✅ Mark turn as completed (AI finished its turn)
-    newGameState.turnCompleted = true;
-    newGameState.lastDoneBy = aiColor;  // AI pressed "Done"
-    newGameState.lastDoneAt = new Date().toISOString();
-
-    // 🎲 AI Done → Generate dice for human player (same as endTurn does)
-    const nextDiceRoll = this.generateDice();
-    newGameState.nextDiceRoll = nextDiceRoll;
-    
-    // ✅ Set nextRoll for human player
-    newGameState.nextRoll = {
-      white: humanPlayerColor === 'white' ? nextDiceRoll : null,
-      black: humanPlayerColor === 'black' ? nextDiceRoll : null,
-    };
-    
-    console.log('⏱️ [AI Done] Switching turn - saving AI timer and freezing human timer');
-
-    // ⏱️ STEP 3: Save AI's final timer (with elapsed time) + new lastDoneBy/lastDoneAt
-    // Now human's timer will freeze (because lastDoneBy = AI, so human timer doesn't count)
-    await this.prisma.game.update({
-      where: { id: gameId },
-      data: {
-        gameState: newGameState,
-        whiteTimeRemaining: currentTimers.whiteTime,
-        blackTimeRemaining: currentTimers.blackTime,
-        updatedAt: new Date(),
-      },
-    });
-
-    return {
-      moves,
-      diceRoll,
-      difficulty,
-      newGameState,
-    };
+    // Delegate to protected AI move service
+    return this.aiMoveService.executeAIMoves(gameId);
   }
 
   /**
@@ -1728,12 +1670,10 @@ export class GameService {
    * ✅ NEW: Stores in nextRoll.{winner} instead of firstDiceRoll
    */
   /**
-   * ⛔⛔⛔ CRITICAL - DO NOT MODIFY! ⛔⛔⛔
+   * ⛔⛔⛔ DELEGATED TO opening-roll.service.ts ⛔⛔⛔
    * 
-   * Complete opening roll and generate dice for winner
-   * 
-   * 🔒 LOCKED - December 6, 2025
-   * ⚠️ Modification without permission = project removal
+   * این متد به فایل جداگانه منتقل شده برای محافظت از لاجیک تایمر
+   * فایل: opening-roll.service.ts
    */
   async completeOpeningRoll(gameId: string, winner: 'white' | 'black') {
     const game = await this.prisma.game.findUnique({
@@ -1744,57 +1684,10 @@ export class GameService {
       throw new NotFoundException('Game not found');
     }
 
-    const gameState = game.gameState as any;
-
-    // 🎲 Use pre-generated firstRollDice for winner
     const nextPlayerDice = game.firstRollDice as [number, number];
     
-    console.log(`\n📤 [FRONTEND] Sending winner's first roll for ${winner}: [${nextPlayerDice[0]}, ${nextPlayerDice[1]}]`);
-
-    const updatedNextRoll = {
-      white: winner === 'white' ? nextPlayerDice : null,
-      black: winner === 'black' ? nextPlayerDice : null,
-    };
-
-    console.log(`📋 nextRoll structure:`, JSON.stringify(updatedNextRoll));
-
-    // ⏱️ CRITICAL: Set lastDoneBy to LOSER so winner's timer starts counting
-    // Logic: If white won opening → lastDoneBy = 'black' → white timer counts
-    const loser = winner === 'white' ? 'black' : 'white';
-
-    const updatedGameState = {
-      ...gameState,
-      currentPlayer: winner,
-      phase: 'playing', // ⏱️ Game is now playing, timer should count
-      turnCompleted: false, // ⏱️ Player hasn't finished their turn yet
-      nextRoll: updatedNextRoll,
-      nextDiceRoll: nextPlayerDice,
-      diceValues: [],
-      lastDoneAt: new Date().toISOString(), // ⏱️ Timer starts NOW when opening winner is determined
-      lastDoneBy: loser, // ⏱️ Set to loser so winner's timer starts
-    };
-
-    console.log('⏱️ Opening roll complete - Timer setup:', {
-      winner,
-      loser,
-      lastDoneBy: loser,
-      lastDoneAt: updatedGameState.lastDoneAt,
-      message: `${winner} timer will start counting`,
-    });
-
-    await this.prisma.game.update({
-      where: { id: gameId },
-      data: {
-        gameState: updatedGameState,
-        updatedAt: new Date(),
-      },
-    });
-
-    return {
-      message: 'Opening roll completed',
-      winner,
-      nextRoll: updatedNextRoll,
-    };
+    // ⏱️ Delegate to protected service
+    return this.openingRollService.completeOpeningRoll(gameId, winner, nextPlayerDice);
   }
 
   /**
