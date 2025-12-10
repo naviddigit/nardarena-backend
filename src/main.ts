@@ -19,9 +19,20 @@ async function bootstrap() {
   app.use(helmet());
   app.use(compression());
 
-  // CORS configuration
+  // CORS configuration - support multiple origins (comma-separated)
+  const allowedOrigins = corsOrigin.split(',').map(origin => origin.trim());
   app.enableCors({
-    origin: corsOrigin,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, Postman, etc.)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`⚠️ CORS blocked origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
   });
 
@@ -65,14 +76,15 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup(`${apiPrefix}/docs`, app, document);
 
-  await app.listen(port);
+  // ✅ Listen on 0.0.0.0 to accept connections from any network interface (mobile, desktop, etc.)
+  await app.listen(port, '0.0.0.0');
 
   console.log(`
   ╔═══════════════════════════════════════════════════════╗
   ║                                                       ║
   ║   🎲 Nard Arena Backend API                          ║
   ║                                                       ║
-  ║   🚀 Server running on: http://localhost:${port}      ║
+  ║   🚀 Server running on: http://0.0.0.0:${port}        ║
   ║   📚 API Documentation: http://localhost:${port}/${apiPrefix}/docs  ║
   ║   🌍 Environment: ${configService.get('NODE_ENV', 'development')}            ║
   ║                                                       ║

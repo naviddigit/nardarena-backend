@@ -157,8 +157,8 @@ export class SettingsService {
     });
 
     return {
-      min: minSetting ? parseInt(minSetting.value, 10) : 1000,
-      max: maxSetting ? parseInt(maxSetting.value, 10) : 4000,
+      min: minSetting ? parseInt(minSetting.value, 10) : 100,
+      max: maxSetting ? parseInt(maxSetting.value, 10) : 1000,
     };
   }
 
