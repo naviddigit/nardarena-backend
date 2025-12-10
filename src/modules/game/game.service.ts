@@ -72,10 +72,72 @@ export class GameService {
     private settingsService: SettingsService,
     private openingRollService: OpeningRollService,
     private aiMoveService: AIMoveService,
+    private gameGateway: any, // Import dynamically to avoid circular dependency
   ) {}
 
   // AI Player ID (system user for AI games)
   private readonly AI_PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // AI system player
+
+  // ========================================================================
+  // 🔌 WebSocket Helper Methods
+  // ========================================================================
+
+  /**
+   * Emit game state update via WebSocket (if gateway is available)
+   */
+  private emitGameStateUpdate(gameId: string, gameState: any) {
+    try {
+      if (this.gameGateway && typeof this.gameGateway.emitGameStateUpdate === 'function') {
+        this.gameGateway.emitGameStateUpdate(gameId, gameState);
+      }
+    } catch (error) {
+      // Silently fail if WebSocket not available (fallback to polling)
+      console.warn('WebSocket emit failed, clients will use polling fallback');
+    }
+  }
+
+  /**
+   * Emit move via WebSocket
+   */
+  private emitMove(gameId: string, moveData: any) {
+    try {
+      if (this.gameGateway && typeof this.gameGateway.emitMove === 'function') {
+        this.gameGateway.emitMove(gameId, moveData);
+      }
+    } catch (error) {
+      console.warn('WebSocket emit failed for move');
+    }
+  }
+
+  /**
+   * Emit timer update via WebSocket
+   */
+  private emitTimerUpdate(gameId: string, timers: { white: number; black: number }) {
+    try {
+      if (this.gameGateway && typeof this.gameGateway.emitTimerUpdate === 'function') {
+        this.gameGateway.emitTimerUpdate(gameId, timers);
+      }
+    } catch (error) {
+      console.warn('WebSocket emit failed for timer');
+    }
+  }
+
+  /**
+   * Emit game end via WebSocket
+   */
+  private emitGameEnd(gameId: string, result: any) {
+    try {
+      if (this.gameGateway && typeof this.gameGateway.emitGameEnd === 'function') {
+        this.gameGateway.emitGameEnd(gameId, result);
+      }
+    } catch (error) {
+      console.warn('WebSocket emit failed for game end');
+    }
+  }
+
+  // ========================================================================
+  // 🎲 Dice and Game Logic
+  // ========================================================================
 
   // 🎲 Generate dice (random or specific for testing)
   private generateDice(rollOne?: number, rollTwo?: number): [number, number] {
@@ -412,10 +474,21 @@ export class GameService {
       }
     }
 
-    await this.prisma.game.update({
+    const updatedGame = await this.prisma.game.update({
       where: { id: gameId },
       data: updateData,
     });
+
+    // 📡 Emit move via WebSocket for real-time sync
+    this.emitMove(gameId, {
+      playerColor: recordMoveDto.playerColor,
+      from: recordMoveDto.from,
+      to: recordMoveDto.to,
+      diceUsed: recordMoveDto.diceUsed,
+      boardState: updatedBoardState,
+      moveNumber: recordMoveDto.moveNumber,
+    });
+    this.emitGameStateUpdate(gameId, updatedGame.gameState);
 
     // If this is an AI game and player just finished their turn, trigger AI move
     const shouldTriggerAI = 
@@ -487,6 +560,15 @@ export class GameService {
     if (loserUserId !== this.AI_PLAYER_ID) {
       await this.updateUserStats(loserUserId, false, endGameDto.whiteSetsWon + endGameDto.blackSetsWon);
     }
+
+    // 📡 Emit game end via WebSocket
+    this.emitGameEnd(gameId, {
+      winner: endGameDto.winner,
+      endReason: endGameDto.endReason || 'NORMAL_WIN',
+      gameState: updatedGame.gameState,
+      whiteSetsWon: endGameDto.whiteSetsWon,
+      blackSetsWon: endGameDto.blackSetsWon,
+    });
 
     return updatedGame;
   }
@@ -586,6 +668,9 @@ export class GameService {
       // 🔍 DEBUG: Read back from DB to verify
       const verifyGame = await this.prisma.game.findUnique({ where: { id: gameId } });
       console.log(`🔍 [VERIFY] Read from DB - lastDoneBy:`, (verifyGame?.gameState as any)?.lastDoneBy);
+      
+      // 📡 Emit dice roll via WebSocket
+      this.emitGameStateUpdate(gameId, savedGame.gameState);
       
       return {
         dice,
@@ -814,6 +899,15 @@ export class GameService {
       
       console.log('✅ [TIMEOUT] Game ended and stats updated');
       
+      // 📡 Emit game end via WebSocket
+      this.emitGameEnd(gameId, {
+        winner,
+        endReason: 'TIMEOUT',
+        gameState: completedGame.gameState,
+        whiteTimeRemaining: whiteTime,
+        blackTimeRemaining: blackTime,
+      });
+      
       // Return special response indicating timeout
       return {
         message: 'Game ended due to timeout',
@@ -848,6 +942,13 @@ export class GameService {
           orderBy: { createdAt: 'asc' },
         },
       },
+    });
+    
+    // 📡 Emit game state and timer update via WebSocket
+    this.emitGameStateUpdate(gameId, updatedGame.gameState);
+    this.emitTimerUpdate(gameId, {
+      white: whiteTime,
+      black: blackTime,
     });
     
     console.log('✅ [endTurn] Game updated in DB:', {
@@ -1254,13 +1355,16 @@ export class GameService {
     console.log('⏱️ [syncGameState] Preserving lastDoneBy:', existingGameState.lastDoneBy);
 
     // Update game state
-    await this.prisma.game.update({
+    const updatedGame = await this.prisma.game.update({
       where: { id: gameId },
       data: {
         gameState: updatedGameState,
         updatedAt: new Date(),
       },
     });
+
+    // 📡 Emit game state update via WebSocket
+    this.emitGameStateUpdate(gameId, updatedGame.gameState);
 
     return { 
       message: 'State synced successfully',
