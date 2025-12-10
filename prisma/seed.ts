@@ -281,14 +281,14 @@ async function main() {
     // AI Behavior
     {
       key: 'ai.move_delay_min',
-      value: '1000',
+      value: '300',
       description: 'Minimum delay (ms) between AI moves for human-like behavior',
       category: 'AI' as const,
       dataType: 'NUMBER' as const,
     },
     {
       key: 'ai.move_delay_max',
-      value: '4000',
+      value: '800',
       description: 'Maximum delay (ms) between AI moves for human-like behavior',
       category: 'AI' as const,
       dataType: 'NUMBER' as const,

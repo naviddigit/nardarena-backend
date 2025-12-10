@@ -346,13 +346,14 @@ export class GameService {
     let whiteTime = game.whiteTimeRemaining || 0;
     let blackTime = game.blackTimeRemaining || 0;
 
-    console.log('⏱️ [calculateCurrentTimers] INPUT:', {
-      whiteTimeDB: whiteTime,
-      blackTimeDB: blackTime,
-      lastDoneBy,
-      lastDoneAt,
-      phase,
-    });
+    // Disabled verbose logging
+    // console.log('⏱️ [calculateCurrentTimers] INPUT:', {
+    //   whiteTimeDB: whiteTime,
+    //   blackTimeDB: blackTime,
+    //   lastDoneBy,
+    //   lastDoneAt,
+    //   phase,
+    // });
 
     // Timer counts if:
     // 1. lastDoneAt exists (turn has started)
@@ -368,12 +369,13 @@ export class GameService {
       const lastDoneTime = new Date(lastDoneAt).getTime();
       const elapsedSeconds = Math.floor((now - lastDoneTime) / 1000);
 
-      console.log('⏱️ [calculateCurrentTimers] CALCULATING:', {
-        now,
-        lastDoneTime,
-        elapsedSeconds,
-        activePlayer: lastDoneBy === 'white' ? 'black' : 'white',
-      });
+      // Disabled verbose logging
+      // console.log('⏱️ [calculateCurrentTimers] CALCULATING:', {
+      //   now,
+      //   lastDoneTime,
+      //   elapsedSeconds,
+      //   activePlayer: lastDoneBy === 'white' ? 'black' : 'white',
+      // });
 
       // Determine which timer should count (OPPOSITE of who pressed Done)
       const activePlayer = lastDoneBy === 'white' ? 'black' : 'white';
@@ -384,14 +386,13 @@ export class GameService {
       } else if (activePlayer === 'black') {
         blackTime = Math.max(0, blackTime - elapsedSeconds);
       }
-    } else {
-      console.log('⏱️ [calculateCurrentTimers] SKIPPED - conditions not met');
     }
 
-    console.log('⏱️ [calculateCurrentTimers] OUTPUT:', {
-      whiteTime,
-      blackTime,
-    });
+    // Disabled verbose logging
+    // console.log('⏱️ [calculateCurrentTimers] OUTPUT:', {
+    //   whiteTime,
+    //   blackTime,
+    // });
 
     return { whiteTime, blackTime };
   }
