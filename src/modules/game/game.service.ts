@@ -54,7 +54,7 @@
  */
 
 
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { RecordMoveDto } from './dto/record-move.dto';
@@ -63,6 +63,7 @@ import { AIPlayerService, AIDifficulty } from './ai/ai-player.service';
 import { SettingsService } from '../settings/settings.service';
 import { OpeningRollService } from './core/opening-roll.service';
 import { AIMoveService } from './core/ai-move.service';
+import { GameGateway } from './game.gateway';
 
 @Injectable()
 export class GameService {
@@ -72,7 +73,7 @@ export class GameService {
     private settingsService: SettingsService,
     private openingRollService: OpeningRollService,
     private aiMoveService: AIMoveService,
-    private gameGateway: any, // Import dynamically to avoid circular dependency
+    @Optional() @Inject(forwardRef(() => GameGateway)) private gameGateway?: GameGateway,
   ) {}
 
   // AI Player ID (system user for AI games)
@@ -670,7 +671,9 @@ export class GameService {
       console.log(`🔍 [VERIFY] Read from DB - lastDoneBy:`, (verifyGame?.gameState as any)?.lastDoneBy);
       
       // 📡 Emit dice roll via WebSocket
-      this.emitGameStateUpdate(gameId, savedGame.gameState);
+      if (verifyGame) {
+        this.emitGameStateUpdate(gameId, verifyGame.gameState);
+      }
       
       return {
         dice,
