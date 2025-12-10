@@ -44,25 +44,27 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * Handle new client connection
    */
   handleConnection(client: Socket) {
-    this.logger.log(`🔌 Client connected: ${client.id}`);
+    // Disabled - too verbose
+    // this.logger.log(`🔌 Client connected: ${client.id}`);
   }
 
   /**
    * Handle client disconnect
    */
   handleDisconnect(client: Socket) {
-    this.logger.log(`🔌 Client disconnected: ${client.id}`);
+    // Disabled - too verbose
+    // this.logger.log(`🔌 Client disconnected: ${client.id}`);
     
     // Clean up: remove from all game rooms
     this.gameRooms.forEach((clients, gameId) => {
       if (clients.has(client.id)) {
         clients.delete(client.id);
-        this.logger.log(`👤 Removed client ${client.id} from game ${gameId}`);
+        // this.logger.log(`👤 Removed client ${client.id} from game ${gameId}`);
         
         // Clean up empty rooms
         if (clients.size === 0) {
           this.gameRooms.delete(gameId);
-          this.logger.log(`🗑️ Removed empty game room: ${gameId}`);
+          // this.logger.log(`🗑️ Removed empty game room: ${gameId}`);
         }
       }
     });
@@ -88,8 +90,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
     this.gameRooms.get(gameId)!.add(client.id);
 
-    this.logger.log(`👤 User ${userId} (socket: ${client.id}) joined game ${gameId}`);
-    this.logger.log(`📊 Game ${gameId} now has ${this.gameRooms.get(gameId)!.size} connected client(s)`);
+    // Silent join - logs only on error
+    // this.logger.log(`👤 User ${userId} (socket: ${client.id}) joined game ${gameId}`);
+    // this.logger.log(`📊 Game ${gameId} now has ${this.gameRooms.get(gameId)!.size} connected client(s)`);
 
     // Acknowledge join
     client.emit('joinedGame', { gameId, success: true });
