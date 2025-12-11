@@ -307,4 +307,119 @@ export class AdminService {
 
     return { message: 'Password reset successfully' };
   }
+
+  /**
+   * Get detailed user info including device and location data
+   */
+  async getUserDetails(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        displayName: true,
+        avatar: true,
+        country: true,
+        role: true,
+        status: true,
+        emailVerified: true,
+        
+        // Registration metadata
+        registrationIp: true,
+        registrationCountry: true,
+        registrationDevice: true,
+        registrationOs: true,
+        registrationBrowser: true,
+        
+        // Security
+        failedLoginAttempts: true,
+        lastFailedLoginAt: true,
+        lastLoginAt: true,
+        
+        // Timestamps
+        createdAt: true,
+        updatedAt: true,
+        
+        // Stats
+        stats: {
+          select: {
+            gamesPlayed: true,
+            gamesWon: true,
+            gamesLost: true,
+            balance: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Get recent login history (last 10)
+    const recentLogins = await this.prisma.loginHistory.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        ipAddress: true,
+        country: true,
+        city: true,
+        device: true,
+        os: true,
+        browser: true,
+        success: true,
+        failReason: true,
+        createdAt: true,
+      },
+    });
+
+    // Get unique IPs and countries
+    const allLogins = await this.prisma.loginHistory.findMany({
+      where: { userId },
+      select: {
+        ipAddress: true,
+        country: true,
+      },
+    });
+
+    const uniqueIps = new Set(allLogins.map((l) => l.ipAddress));
+    const uniqueCountries = new Set(allLogins.map((l) => l.country).filter(Boolean));
+
+    return {
+      ...user,
+      recentLogins,
+      loginStats: {
+        totalLogins: allLogins.length,
+        uniqueIps: uniqueIps.size,
+        uniqueCountries: uniqueCountries.size,
+        countries: Array.from(uniqueCountries),
+      },
+    };
+  }
+
+  /**
+   * Get user's full login history
+   */
+  async getUserLoginHistory(userId: string, limit = 50) {
+    return this.prisma.loginHistory.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        ipAddress: true,
+        country: true,
+        city: true,
+        device: true,
+        os: true,
+        browser: true,
+        success: true,
+        failReason: true,
+        createdAt: true,
+      },
+    });
+  }
 }

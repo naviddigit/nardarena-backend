@@ -326,7 +326,7 @@ export class AIPlayerService {
   ): boolean {
     // Check if destination is out of bounds (bearing off)
     if (to < 0 || to > 23) {
-      return this.canBearOff(boardState, color);
+      return this.isValidBearOff(boardState, from, to, color);
     }
 
     // Check if destination point is blocked by opponent
@@ -363,6 +363,70 @@ export class AIPlayerService {
     if (boardState.bar[color] > 0) return false;
 
     return true;
+  }
+
+  /**
+   * Check if specific bear-off move is valid
+   * قوانین مهم:
+   * 1. تاس باید دقیقا با position مهره match کنه
+   * 2. اگه تاس بزرگتر بود، فقط از بالاترین (دورترین) مهره میشه خارج کرد
+   * 
+   * ⚪ سفید: خونه 0-5 → position 1-6 (خونه 0 = position 1)
+   * ⚫ مشکی: خونه 18-23 → position 6-1 (خونه 18 = position 6, خونه 23 = position 1)
+   */
+  private isValidBearOff(
+    boardState: BoardState,
+    from: number,
+    to: number,
+    color: 'white' | 'black'
+  ): boolean {
+    // First check if player can bear off at all
+    if (!this.canBearOff(boardState, color)) {
+      return false;
+    }
+
+    // Calculate position and die value
+    let position: number;
+    let die: number;
+
+    if (color === 'white') {
+      // ⚪ سفید: خونه 0 = position 1, خونه 5 = position 6
+      position = from + 1;
+      die = from - to; // to is negative, so from - to = die
+    } else {
+      // ⚫ مشکی: خونه 23 = position 1, خونه 18 = position 6
+      position = 24 - from;
+      die = to - from; // to is > 23, so to - from = die
+    }
+
+    // Exact match: تاس دقیقا با position مهره برابره
+    if (position === die) {
+      return true;
+    }
+
+    // Higher die: تاس بزرگتر از position است
+    // فقط میشه اگه این بالاترین (دورترین) مهره باشه
+    if (die > position) {
+      if (color === 'white') {
+        // چک کن خونه‌های 5, 4, 3, ... تا from+1
+        for (let p = 5; p > from; p--) {
+          if (boardState.points[p][color] > 0) {
+            return false; // مهره بالاتری وجود داره
+          }
+        }
+      } else {
+        // ⚫ مشکی: چک کن خونه‌های 18, 19, 20, ... تا from-1
+        for (let p = 18; p < from; p++) {
+          if (boardState.points[p][color] > 0) {
+            return false; // مهره بالاتری وجود داره
+          }
+        }
+      }
+      return true;
+    }
+
+    // تاس کوچکتر از position - نمیشه خارج کرد
+    return false;
   }
 
   /**

@@ -31,6 +31,8 @@ model User {
   // Account status
   status                UserStatus @default(ACTIVE)
   emailVerified         Boolean   @default(false)
+  emailVerificationCode String?   // 6-digit code for email verification
+  emailVerificationExpires DateTime? // Expiration time for verification code
   forcePasswordChange   Boolean   @default(false)
   
   // Security
@@ -38,6 +40,13 @@ model User {
   lastFailedLoginAt     DateTime?
   lockedUntil           DateTime?
   lastLoginAt           DateTime?
+  
+  // Registration metadata (captured at signup)
+  registrationIp        String?   // IP address used during registration
+  registrationCountry   String?   // Country code detected at registration
+  registrationDevice    String?   // Device type (e.g., 'iPhone 14', 'Samsung Galaxy S21')
+  registrationOs        String?   // Operating system (e.g., 'iOS 16', 'Android 13')
+  registrationBrowser   String?   // Browser info (e.g., 'Chrome 120', 'Safari 17')
   
   // Timestamps
   createdAt             DateTime  @default(now())
@@ -53,12 +62,15 @@ model User {
   transactions          Transaction[]
   adminActions          AdminAction[] @relation("AdminUser")
   targetedAdminActions  AdminAction[] @relation("TargetUser")
+  loginHistory          LoginHistory[]
+  emailVerificationLogs EmailVerificationLog[]
   
   @@index([email])
   @@index([username])
   @@index([status])
   @@index([googleId])
   @@index([isBot])
+  @@index([registrationCountry])
   @@map("users")
 }
 
@@ -493,6 +505,35 @@ enum AdminActionType {
 }
 
 // ==========================================
+// LOGIN HISTORY TRACKING
+// ==========================================
+
+model LoginHistory {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Login metadata
+  ipAddress       String
+  country         String?  // Country code (e.g., 'US', 'IR')
+  city            String?  // City name
+  device          String?  // Device info (e.g., 'iPhone 14')
+  os              String?  // Operating system (e.g., 'iOS 16')
+  browser         String?  // Browser info (e.g., 'Chrome 120')
+  
+  // Login status
+  success         Boolean  @default(true)
+  failReason      String?  // If failed, why?
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([userId, createdAt])
+  @@index([ipAddress])
+  @@index([country])
+  @@map("login_history")
+}
+
+// ==========================================
 // SESSION MANAGEMENT (Optional - for refresh tokens)
 // ==========================================
 
@@ -506,4 +547,27 @@ model RefreshToken {
   @@index([userId])
   @@index([token])
   @@map("refresh_tokens")
+}
+
+// ==========================================
+// EMAIL VERIFICATION LOGS
+// ==========================================
+
+model EmailVerificationLog {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Verification details
+  email       String   // Email address at the time of sending
+  code        String   // Verification code sent
+  ipAddress   String?  // IP that requested verification
+  success     Boolean  @default(false) // Whether verification succeeded
+  
+  sentAt      DateTime @default(now())
+  verifiedAt  DateTime? // When the code was successfully verified
+  
+  @@index([userId, sentAt])
+  @@index([email])
+  @@map("email_verification_logs")
 }

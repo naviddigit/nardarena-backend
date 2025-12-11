@@ -1,0 +1,191 @@
+### ==================== Email Verification Tests ====================
+### Base URL
+@baseUrl = http://localhost:3002/api
+@email = test@example.com
+
+### 1. Register Test User
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "username": "testuser123",
+  "password": "Test123456!",
+  "displayName": "Test User"
+}
+
+### 2. Send Verification Code
+POST {{baseUrl}}/auth/send-verification-code
+Content-Type: application/json
+
+{
+  "email": "{{email}}"
+}
+
+### Expected Response:
+# {
+#   "message": "Verification code sent to your email"
+# }
+
+### 3. Verify Email (replace with code from email)
+POST {{baseUrl}}/auth/verify-email
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "code": "123456"
+}
+
+### Expected Response:
+# {
+#   "message": "Email verified successfully"
+# }
+
+### 4. Try to Send Code Again (Should fail - already verified)
+POST {{baseUrl}}/auth/send-verification-code
+Content-Type: application/json
+
+{
+  "email": "{{email}}"
+}
+
+### Expected Error:
+# {
+#   "statusCode": 400,
+#   "message": "Email already verified"
+# }
+
+### 5. Send Code to Non-existent User (Should fail)
+POST {{baseUrl}}/auth/send-verification-code
+Content-Type: application/json
+
+{
+  "email": "nonexistent@example.com"
+}
+
+### Expected Error:
+# {
+#   "statusCode": 400,
+#   "message": "User not found"
+# }
+
+### 6. Verify with Wrong Code (Should fail)
+POST {{baseUrl}}/auth/verify-email
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "code": "000000"
+}
+
+### Expected Error:
+# {
+#   "statusCode": 400,
+#   "message": "Invalid verification code"
+# }
+
+### ==================== Rate Limiting Test ====================
+
+### 7. Send Multiple Codes (Should rate limit after first)
+POST {{baseUrl}}/auth/send-verification-code
+Content-Type: application/json
+
+{
+  "email": "ratelimit@example.com"
+}
+
+###
+POST {{baseUrl}}/auth/send-verification-code
+Content-Type: application/json
+
+{
+  "email": "ratelimit@example.com"
+}
+
+### Expected Error on second request:
+# {
+#   "statusCode": 400,
+#   "message": "Please wait X seconds before requesting a new code"
+# }
+
+### ==================== Check User Status ====================
+
+### 8. Check if user exists and verification status
+# Run in database:
+# SELECT 
+#   email, 
+#   username, 
+#   "emailVerified", 
+#   "emailVerificationCode",
+#   "emailVerificationExpires"
+# FROM users 
+# WHERE email = 'test@example.com';
+
+### ==================== Check Verification Logs ====================
+
+### 9. Check email verification logs
+# Run in database:
+# SELECT 
+#   email, 
+#   code, 
+#   success, 
+#   "sentAt", 
+#   "verifiedAt",
+#   "ipAddress"
+# FROM email_verification_logs 
+# WHERE email = 'test@example.com'
+# ORDER BY "sentAt" DESC;
+
+### ==================== Testing with Real Gmail ====================
+
+### 10. Register with your real email
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "your-real-email@gmail.com",
+  "username": "yourname",
+  "password": "YourPassword123!",
+  "displayName": "Your Name"
+}
+
+### 11. Send code to your real email
+POST {{baseUrl}}/auth/send-verification-code
+Content-Type: application/json
+
+{
+  "email": "your-real-email@gmail.com"
+}
+
+### 12. Check your email inbox (or spam) for verification code
+### Then verify with the code you received:
+
+POST {{baseUrl}}/auth/verify-email
+Content-Type: application/json
+
+{
+  "email": "your-real-email@gmail.com",
+  "code": "PASTE_CODE_HERE"
+}
+
+### ==================== Notes ====================
+# 
+# Before testing:
+# 1. Add RESEND_API_KEY to .env file
+#    - Sign up at https://resend.com
+#    - Get free API key (3,000 emails/month)
+#    - Add to .env: RESEND_API_KEY=re_your_key_here
+#
+# 2. Make sure backend is running:
+#    npm run start:dev
+#
+# 3. Make sure database is up:
+#    docker-compose up -d postgres
+#
+# Tips:
+# - First email might go to spam folder
+# - Code expires in 15 minutes
+# - 60 second cooldown between code requests
+# - Check backend logs for email delivery status
+# - Verify Resend dashboard: https://resend.com/emails
+#

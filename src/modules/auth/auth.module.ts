@@ -6,6 +6,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
+import { LoginHistoryService } from './login-history.service';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -19,11 +21,13 @@ import { GoogleStrategy } from './strategies/google.strategy';
         },
       }),
     }),
+    EmailModule,
   ],
   controllers: [AuthController],
   providers: [
     AuthService,
     JwtStrategy,
+    LoginHistoryService,
     // Conditionally provide Google Strategy only if credentials exist
     {
       provide: GoogleStrategy,
@@ -42,6 +46,6 @@ import { GoogleStrategy } from './strategies/google.strategy';
       inject: [ConfigService],
     },
   ],
-  exports: [AuthService, JwtModule],
+  exports: [AuthService, JwtModule, LoginHistoryService],
 })
 export class AuthModule {}

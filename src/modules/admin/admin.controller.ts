@@ -47,6 +47,21 @@ export class AdminController {
     );
   }
 
+  @Get('users/:id/details')
+  @ApiOperation({ summary: 'Get user detailed info (device, location, login history)' })
+  async getUserDetails(@Param('id') userId: string) {
+    return this.adminService.getUserDetails(userId);
+  }
+
+  @Get('users/:id/login-history')
+  @ApiOperation({ summary: 'Get user login history' })
+  async getUserLoginHistory(
+    @Param('id') userId: string,
+    @Query('limit') limit?: number,
+  ) {
+    return this.adminService.getUserLoginHistory(userId, Number(limit) || 50);
+  }
+
   @Get('games')
   @ApiOperation({ summary: 'Get all games (paginated with filters)' })
   async getGames(

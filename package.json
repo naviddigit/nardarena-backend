@@ -41,6 +41,7 @@
     "@nestjs/websockets": "^10.4.20",
     "@prisma/client": "^5.8.0",
     "@types/bs58": "^4.0.4",
+    "@types/ua-parser-js": "^0.7.39",
     "base-x": "^5.0.1",
     "bcrypt": "^5.1.1",
     "bs58": "^6.0.0",
@@ -54,9 +55,11 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.1",
+    "resend": "^6.6.0",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.1",
-    "tronweb": "^6.1.0"
+    "tronweb": "^6.1.0",
+    "ua-parser-js": "^2.0.7"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.3.0",

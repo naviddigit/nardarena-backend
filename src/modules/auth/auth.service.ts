@@ -12,6 +12,9 @@ import { PrismaService } from '@/database/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { AuthResponse, JwtPayload } from './interfaces/auth.interface';
+import { LoginHistoryService } from './login-history.service';
+import { getDeviceInfo, getLocationFromIp } from '../../utils/device-detector.util';
+import { EmailService } from '../email/email.service';
 
 /**
  * Authentication Service
@@ -33,13 +36,16 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private loginHistoryService: LoginHistoryService,
+    private emailService: EmailService,
   ) {}
 
   /**
    * Register new user
    * Validates uniqueness of email and username
+   * Captures device info and location at registration
    */
-  async register(registerDto: RegisterDto): Promise<AuthResponse> {
+  async register(registerDto: RegisterDto, req?: any): Promise<AuthResponse> {
     const { email, username, password, displayName, avatar, country } = registerDto;
 
     // Check if email exists
@@ -61,6 +67,27 @@ export class AuthService {
     // Hash password
     const passwordHash = await bcrypt.hash(password, this.saltRounds);
 
+    // Extract device and location info from request
+    let registrationData: {
+      registrationIp?: string;
+      registrationCountry?: string;
+      registrationDevice?: string;
+      registrationOs?: string;
+      registrationBrowser?: string;
+    } = {};
+    if (req) {
+      const deviceInfo = getDeviceInfo(req);
+      const locationInfo = await getLocationFromIp(deviceInfo.ip);
+
+      registrationData = {
+        registrationIp: deviceInfo.ip,
+        registrationCountry: country || locationInfo.country || undefined,
+        registrationDevice: deviceInfo.device,
+        registrationOs: deviceInfo.os,
+        registrationBrowser: deviceInfo.browser,
+      };
+    }
+
     // Create user with stats
     const user = await this.prisma.user.create({
       data: {
@@ -69,8 +96,9 @@ export class AuthService {
         displayName: displayName || username,
         passwordHash,
         avatar: avatar || null,
-        country: country || null,
+        country: country || registrationData.registrationCountry || null,
         emailVerified: false, // TODO: Implement email verification
+        ...registrationData,
         stats: {
           create: {
             balance: 0,
@@ -88,7 +116,12 @@ export class AuthService {
       },
     });
 
-    this.logger.log(`New user registered: ${user.email}`);
+    this.logger.log(`New user registered: ${user.email} from ${registrationData.registrationCountry || 'unknown'}`);
+
+    // Log successful registration as login
+    if (req) {
+      await this.loginHistoryService.logSuccessfulLogin(user.id, req);
+    }
 
     // Generate tokens
     return this.generateAuthResponse(user);
@@ -97,8 +130,9 @@ export class AuthService {
   /**
    * Login user
    * Tracks failed login attempts and locks account after 5 failures
+   * Logs login history with device and location info
    */
-  async login(loginDto: LoginDto): Promise<AuthResponse> {
+  async login(loginDto: LoginDto, req?: any): Promise<AuthResponse> {
     const { email, password } = loginDto;
 
     // Find user
@@ -135,11 +169,22 @@ export class AuthService {
 
     if (!isPasswordValid) {
       await this.handleFailedLogin(user.id);
+      
+      // Log failed login attempt
+      if (req) {
+        await this.loginHistoryService.logFailedLogin(user.id, req, 'Invalid password');
+      }
+      
       throw new UnauthorizedException('Invalid credentials');
     }
 
     // Reset failed attempts on successful login
     await this.resetFailedLoginAttempts(user.id);
+
+    // Log successful login
+    if (req) {
+      await this.loginHistoryService.logSuccessfulLogin(user.id, req);
+    }
 
     this.logger.log(`User logged in: ${user.email}`);
 
@@ -275,5 +320,242 @@ export class AuthService {
     } catch (error) {
       throw new UnauthorizedException('Invalid refresh token');
     }
+  }
+
+  /**
+   * Google OAuth Login
+   * Creates user if doesn't exist, or links to existing email
+   */
+  async googleLogin(googleUser: any, req?: any): Promise<AuthResponse> {
+    const { email, firstName, lastName, picture } = googleUser.user || googleUser;
+    const googleId = (googleUser.user || googleUser).id;
+
+    if (!email) {
+      throw new BadRequestException('No email provided by Google');
+    }
+
+    // Capture device info
+    const deviceInfo = req ? getDeviceInfo(req) : null;
+    const locationInfo = deviceInfo ? await getLocationFromIp(deviceInfo.ip) : null;
+
+    // Check if user exists by email or googleId
+    let user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email },
+          { googleId },
+        ],
+      },
+    });
+
+    // If user doesn't exist, create one
+    if (!user) {
+      // Generate username from email
+      const baseUsername = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+      let username = baseUsername;
+      let counter = 1;
+
+      // Ensure unique username
+      while (await this.prisma.user.findUnique({ where: { username } })) {
+        username = `${baseUsername}${counter}`;
+        counter++;
+      }
+
+      const displayName = firstName && lastName 
+        ? `${firstName} ${lastName}` 
+        : firstName || username;
+
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          username,
+          displayName,
+          avatar: picture,
+          googleId,
+          passwordHash: null, // No password for OAuth users
+          country: locationInfo?.country || null,
+          registrationIp: deviceInfo?.ip || null,
+          registrationCountry: locationInfo?.country || null,
+          registrationDevice: deviceInfo?.device || null,
+          registrationOs: deviceInfo?.os || null,
+          registrationBrowser: deviceInfo?.browser || null,
+          emailVerified: true, // Google verified
+        },
+      });
+
+      this.logger.log(`New user created via Google OAuth: ${email}`);
+    } else {
+      // Update user with Google ID if not set
+      if (!user.googleId) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { googleId },
+        });
+      }
+
+      // Update last login and avatar
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          lastLoginAt: new Date(),
+          avatar: picture || user.avatar, // Update avatar if changed
+        },
+      });
+
+      this.logger.log(`User logged in via Google OAuth: ${email}`);
+    }
+
+    // Log successful login
+    if (req) {
+      await this.loginHistoryService.logSuccessfulLogin(user.id, req);
+    }
+
+    return this.generateAuthResponse(user);
+  }
+
+  /**
+   * Send email verification code
+   * Generates 6-digit code, saves to DB, sends via email
+   * Rate limited to prevent abuse
+   */
+  async sendVerificationCode(email: string, req?: any): Promise<{ message: string }> {
+    // Find user
+    const user = await this.prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (user.emailVerified) {
+      throw new BadRequestException('Email already verified');
+    }
+
+    // Rate limiting: Check if code was sent recently (wait 1 minute)
+    if (user.emailVerificationExpires && user.emailVerificationExpires > new Date()) {
+      const remainingSeconds = Math.ceil(
+        (user.emailVerificationExpires.getTime() - Date.now()) / 1000,
+      );
+      throw new BadRequestException(
+        `Please wait ${remainingSeconds} seconds before requesting a new code`,
+      );
+    }
+
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Save code with 15 minute expiration
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerificationCode: code,
+        emailVerificationExpires: expiresAt,
+      },
+    });
+
+    // Extract IP for logging
+    let ipAddress = 'unknown';
+    if (req) {
+      const deviceInfo = getDeviceInfo(req);
+      ipAddress = deviceInfo.ip;
+    }
+
+    // Log verification attempt
+    await this.prisma.emailVerificationLog.create({
+      data: {
+        userId: user.id,
+        email: user.email,
+        code,
+        ipAddress,
+        success: false,
+      },
+    });
+
+    // Send email
+    const emailSent = await this.emailService.sendVerificationCode(
+      user.email,
+      code,
+      user.displayName || user.username,
+    );
+
+    if (!emailSent) {
+      this.logger.warn(`Failed to send verification email to ${user.email}`);
+    }
+
+    this.logger.log(`Verification code sent to ${user.email}`);
+
+    return {
+      message: 'Verification code sent to your email',
+    };
+  }
+
+  /**
+   * Verify email with code
+   * Checks code validity and expiration
+   */
+  async verifyEmail(email: string, code: string): Promise<{ message: string }> {
+    // Find user
+    const user = await this.prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    if (user.emailVerified) {
+      throw new BadRequestException('Email already verified');
+    }
+
+    if (!user.emailVerificationCode) {
+      throw new BadRequestException('No verification code found. Please request a new one');
+    }
+
+    // Check expiration
+    if (user.emailVerificationExpires && user.emailVerificationExpires < new Date()) {
+      throw new BadRequestException('Verification code expired. Please request a new one');
+    }
+
+    // Check code match
+    if (user.emailVerificationCode !== code) {
+      throw new BadRequestException('Invalid verification code');
+    }
+
+    // Mark email as verified
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerified: true,
+        emailVerificationCode: null,
+        emailVerificationExpires: null,
+      },
+    });
+
+    // Update verification log
+    await this.prisma.emailVerificationLog.updateMany({
+      where: {
+        userId: user.id,
+        code,
+        success: false,
+      },
+      data: {
+        success: true,
+        verifiedAt: new Date(),
+      },
+    });
+
+    this.logger.log(`Email verified for user: ${user.email}`);
+
+    // Send welcome email
+    await this.emailService.sendWelcomeEmail(
+      user.email,
+      user.displayName || user.username,
+    );
+
+    return {
+      message: 'Email verified successfully',
+    };
   }
 }

@@ -198,7 +198,20 @@ export class AIMoveService {
     // Frontend format: points: Array<{ checkers: ['white', 'black', ...], count: number }>
     // AI format: points: Array<{ white: number, black: number }>
     
-    const aiPoints = gameState.points.map((point: any) => {
+    // Ensure we have 24 points
+    if (!gameState.points || gameState.points.length !== 24) {
+      console.error('❌ [AI] Invalid game state - points array missing or wrong length');
+      console.error('Game state:', JSON.stringify(gameState, null, 2));
+      throw new Error('Invalid game state: points array must have exactly 24 elements');
+    }
+    
+    const aiPoints = gameState.points.map((point: any, index: number) => {
+      // Ensure point has proper structure
+      if (!point || typeof point !== 'object') {
+        console.warn(`⚠️ [AI] Point ${index} has invalid structure, initializing empty`);
+        return { white: 0, black: 0 };
+      }
+      
       const whiteCount = point.checkers?.filter((c: string) => c === 'white').length || 0;
       const blackCount = point.checkers?.filter((c: string) => c === 'black').length || 0;
       
@@ -261,25 +274,57 @@ export class AIMoveService {
     if (!boardState.bar) boardState.bar = { white: 0, black: 0 };
     if (!boardState.off) boardState.off = { white: 0, black: 0 };
 
+    // Ensure points array exists and has proper structure
+    if (!boardState.points || boardState.points.length !== 24) {
+      console.error('❌ [AI] Invalid board state - points array missing or wrong length');
+      throw new Error('Invalid board state');
+    }
+
     // Move from bar
     if (move.from === -1) {
       boardState.bar[color]--;
       const destPoint = boardState.points[move.to];
+      
+      // Ensure point exists and has proper structure
+      if (!destPoint) {
+        console.error(`❌ [AI] Point ${move.to} is undefined`);
+        boardState.points[move.to] = { white: 0, black: 0 };
+      }
+      
       if (destPoint[opponentColor] === 1) {
         destPoint[opponentColor] = 0;
         boardState.bar[opponentColor]++;
       }
       boardState.points[move.to][color]++;
     }
-    // Bear off
-    else if (move.to === -1 || move.to === 24) {
-      boardState.points[move.from][color]--;
+    // Bear off (move.to === -1 or move.to >= 24 means bearing off)
+    else if (move.to === -1 || move.to >= 24) {
+      const fromPoint = boardState.points[move.from];
+      
+      // Ensure point exists
+      if (!fromPoint) {
+        console.error(`❌ [AI] Point ${move.from} is undefined`);
+        throw new Error(`Invalid move: point ${move.from} does not exist`);
+      }
+      
+      fromPoint[color]--;
       boardState.off[color]++;
     }
-    // Normal move
-    else {
+    // Normal move (must be within 0-23 range)
+    else if (move.to >= 0 && move.to < 24) {
       const fromPoint = boardState.points[move.from];
       const toPoint = boardState.points[move.to];
+      
+      // Validate points exist
+      if (!fromPoint) {
+        console.error(`❌ [AI] From point ${move.from} is undefined`);
+        throw new Error(`Invalid move: point ${move.from} does not exist`);
+      }
+      
+      if (!toPoint) {
+        console.error(`❌ [AI] To point ${move.to} is undefined - creating empty point`);
+        boardState.points[move.to] = { white: 0, black: 0 };
+      }
       
       fromPoint[color]--;
       
@@ -289,6 +334,11 @@ export class AIMoveService {
       }
       
       toPoint[color]++;
+    }
+    // Invalid move
+    else {
+      console.error(`❌ [AI] Invalid move detected:`, move);
+      throw new Error(`Invalid move: to=${move.to} is out of valid range`);
     }
   }
 }

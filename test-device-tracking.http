@@ -1,0 +1,261 @@
+### ========================================
+### 🌍 Device & Location Tracking - Test Suite
+### ========================================
+
+@baseUrl = http://localhost:3001/api
+@adminToken = YOUR_ADMIN_TOKEN_HERE
+@userToken = YOUR_USER_TOKEN_HERE
+
+### ========================================
+### 1️⃣ DETECT LOCATION (Public - No Auth)
+### ========================================
+
+# این endpoint آی‌پی، کشور، شهر، دیوایس و OS شما رو برمی‌گردونه
+GET {{baseUrl}}/auth/detect-location
+Content-Type: application/json
+
+### Expected Response:
+# {
+#   "ip": "5.100.123.45",
+#   "country": "IR",
+#   "countryName": "Iran",
+#   "city": "Tehran",
+#   "device": "Desktop",
+#   "os": "Windows 10",
+#   "browser": "Chrome 120.0"
+# }
+
+### ========================================
+### 2️⃣ REGISTER WITH COUNTRY (Public - No Auth)
+### ========================================
+
+# ثبت‌نام با کشور
+# اطلاعات دیوایس و IP خودکار ذخیره می‌شه
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "testuser@example.com",
+  "username": "testuser",
+  "password": "Test@1234",
+  "displayName": "Test User",
+  "country": "IR"
+}
+
+### Expected Response:
+# {
+#   "access_token": "eyJhbGc...",
+#   "refresh_token": "eyJhbGc...",
+#   "user": {
+#     "id": "uuid",
+#     "email": "testuser@example.com",
+#     "username": "testuser",
+#     "displayName": "Test User",
+#     "country": "IR",
+#     "role": "USER"
+#   }
+# }
+
+### ========================================
+### 3️⃣ LOGIN (Public - No Auth)
+### ========================================
+
+# هر بار login می‌کنید، اطلاعات device و location ذخیره می‌شه
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "testuser@example.com",
+  "password": "Test@1234"
+}
+
+### توکن رو کپی کن و بالا بزار:
+# @userToken = TOKEN_FROM_RESPONSE
+
+### ========================================
+### 4️⃣ GET MY LOGIN HISTORY (User Auth Required)
+### ========================================
+
+# تاریخچه ورودهای خودت رو می‌بینی
+GET {{baseUrl}}/users/login-history?limit=20
+Authorization: Bearer {{userToken}}
+
+### Expected Response:
+# [
+#   {
+#     "id": "uuid",
+#     "ipAddress": "5.100.123.45",
+#     "country": "IR",
+#     "city": "Tehran",
+#     "device": "Desktop",
+#     "os": "Windows 10",
+#     "browser": "Chrome 120.0",
+#     "success": true,
+#     "createdAt": "2024-12-10T21:00:00Z"
+#   }
+# ]
+
+### ========================================
+### 5️⃣ CHECK SUSPICIOUS ACTIVITY (User Auth Required)
+### ========================================
+
+# بررسی می‌کنه آیا ورودهای مشکوک داشتی یا نه
+GET {{baseUrl}}/users/suspicious-activity?hours=24
+Authorization: Bearer {{userToken}}
+
+### Expected Response:
+# {
+#   "totalLogins": 5,
+#   "failedLogins": 1,
+#   "uniqueCountries": 2,
+#   "uniqueIps": 3,
+#   "countries": ["IR", "US"],
+#   "ips": ["5.100.123.45", "8.8.8.8"],
+#   "recentFailed": [...]
+# }
+
+### ========================================
+### 6️⃣ ADMIN: LIST ALL USERS (Admin Auth Required)
+### ========================================
+
+# لیست کاربران با country filter
+GET {{baseUrl}}/admin/users?page=1&limit=50&country=IR
+Authorization: Bearer {{adminToken}}
+
+### ========================================
+### 7️⃣ ADMIN: GET USER DETAILS (Admin Auth Required)
+### ========================================
+
+# اطلاعات کامل یک کاربر شامل:
+# - اطلاعات ثبت‌نام (IP, Country, Device, OS, Browser)
+# - 10 ورود اخیر
+# - تعداد کل ورودها، IP های یونیک، کشورهای یونیک
+
+GET {{baseUrl}}/admin/users/USER_ID_HERE/details
+Authorization: Bearer {{adminToken}}
+
+### Expected Response:
+# {
+#   "id": "uuid",
+#   "email": "testuser@example.com",
+#   "username": "testuser",
+#   "country": "IR",
+#   
+#   // Registration metadata
+#   "registrationIp": "5.100.123.45",
+#   "registrationCountry": "IR",
+#   "registrationDevice": "Desktop",
+#   "registrationOs": "Windows 10",
+#   "registrationBrowser": "Chrome 120.0",
+#   
+#   // Recent logins
+#   "recentLogins": [...],
+#   
+#   // Stats
+#   "loginStats": {
+#     "totalLogins": 15,
+#     "uniqueIps": 3,
+#     "uniqueCountries": 2,
+#     "countries": ["IR", "US"]
+#   }
+# }
+
+### ========================================
+### 8️⃣ ADMIN: GET USER LOGIN HISTORY (Admin Auth Required)
+### ========================================
+
+# تاریخچه کامل ورود یک کاربر خاص
+GET {{baseUrl}}/admin/users/USER_ID_HERE/login-history?limit=100
+Authorization: Bearer {{adminToken}}
+
+### ========================================
+### 9️⃣ DATABASE QUERIES (Direct SQL)
+### ========================================
+
+# بعد از ثبت‌نام/لاگین، این query ها رو بزن تو pgAdmin یا Prisma Studio:
+
+# 1. اطلاعات ثبت‌نام کاربران:
+/*
+SELECT 
+  username,
+  email,
+  country,
+  registration_ip,
+  registration_country,
+  registration_device,
+  registration_os,
+  registration_browser,
+  created_at
+FROM users
+WHERE is_bot = false
+ORDER BY created_at DESC
+LIMIT 20;
+*/
+
+# 2. تاریخچه ورودها:
+/*
+SELECT 
+  u.username,
+  lh.ip_address,
+  lh.country,
+  lh.city,
+  lh.device,
+  lh.os,
+  lh.browser,
+  lh.success,
+  lh.fail_reason,
+  lh.created_at
+FROM login_history lh
+JOIN users u ON lh.user_id = u.id
+ORDER BY lh.created_at DESC
+LIMIT 50;
+*/
+
+# 3. تعداد کاربران به تفکیک کشور:
+/*
+SELECT 
+  country,
+  COUNT(*) as user_count
+FROM users
+WHERE is_bot = false AND country IS NOT NULL
+GROUP BY country
+ORDER BY user_count DESC;
+*/
+
+# 4. IP های مشکوک (چند کاربر از یک IP):
+/*
+SELECT 
+  registration_ip,
+  COUNT(DISTINCT id) as user_count,
+  STRING_AGG(username, ', ') as usernames
+FROM users
+WHERE is_bot = false AND registration_ip IS NOT NULL
+GROUP BY registration_ip
+HAVING COUNT(DISTINCT id) > 1
+ORDER BY user_count DESC;
+*/
+
+# 5. کاربران با بیشترین ورود ناموفق:
+/*
+SELECT 
+  u.username,
+  u.email,
+  COUNT(*) as failed_logins,
+  MAX(lh.created_at) as last_failed_at
+FROM login_history lh
+JOIN users u ON lh.user_id = u.id
+WHERE lh.success = false
+GROUP BY u.id, u.username, u.email
+ORDER BY failed_logins DESC
+LIMIT 20;
+*/
+
+### ========================================
+### 🔟 PRISMA STUDIO (Visual Database Browser)
+### ========================================
+
+# برای دیدن داده‌ها به صورت بصری:
+# cd nard-backend
+# npx prisma studio
+# بعد برو http://localhost:5555
+# جداول users و login_history رو چک کن
