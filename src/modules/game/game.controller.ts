@@ -209,6 +209,14 @@ export class GameController {
     return this.gameService.completeOpeningRoll(gameId, body.winner);
   }
 
+  @Post(':id/start-new-set')
+  @ApiOperation({ summary: 'Start a new set and reset timers' })
+  @ApiResponse({ status: 200, description: 'New set started' })
+  async startNewSet(@Req() req: any, @Param('id') gameId: string, @Body() body: { winner: 'white' | 'black' }) {
+    const userId = req.user.userId;
+    return this.gameService.startNewSet(gameId, userId, body.winner);
+  }
+
   @Get(':id/can-play')
   @ApiOperation({ summary: 'Check if user can play (turn completed check)' })
   @ApiResponse({ status: 200, description: 'Returns if user can play' })

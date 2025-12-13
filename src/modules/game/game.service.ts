@@ -977,6 +977,139 @@ export class GameService {
   }
 
   /**
+   * ⏱️ Start a new set (reset board and timers)
+   * Called when a player wins a set and next set begins
+   */
+  async startNewSet(gameId: string, userId: string, winner: 'white' | 'black') {
+    const game = await this.prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Game not found');
+    }
+
+    // Verify user is a player
+    const AI_PLAYER_ID = '00000000-0000-0000-0000-000000000000';
+    const isAIGame = game.gameType === 'AI';
+    
+    if (!isAIGame && game.whitePlayerId !== userId && game.blackPlayerId !== userId) {
+      throw new ForbiddenException('Not a player in this game');
+    }
+
+    const gameState = game.gameState as any;
+    const loser = winner === 'white' ? 'black' : 'white';
+
+    console.log(`🏆 Starting new set - Winner: ${winner}`);
+
+    // ✅ Reset board to initial state
+    const resetBoardState = {
+      points: [
+        { checkers: ['white', 'white'], count: 2 },  // Point 0
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: ['black', 'black', 'black', 'black', 'black'], count: 5 },  // Point 5
+        { checkers: [], count: 0 },
+        { checkers: ['black', 'black', 'black'], count: 3 },  // Point 7
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: ['white', 'white', 'white', 'white', 'white'], count: 5 },  // Point 11
+        { checkers: ['white', 'white', 'white', 'white', 'white'], count: 5 },  // Point 12
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: ['black', 'black', 'black'], count: 3 },  // Point 16
+        { checkers: [], count: 0 },
+        { checkers: ['black', 'black', 'black', 'black', 'black'], count: 5 },  // Point 18
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: [], count: 0 },
+        { checkers: ['white', 'white'], count: 2 },  // Point 23
+      ],
+      bar: { white: 0, black: 0 },
+      off: { white: 0, black: 0 },
+    };
+
+    // ✅ Generate new dice for winner
+    const newDice = this.generateDice();
+    console.log(`🎲 New set - Generating dice for winner ${winner}:`, newDice);
+
+    const updatedNextRoll = {
+      white: winner === 'white' ? newDice : null,
+      black: winner === 'black' ? newDice : null,
+    };
+
+    // ⏱️ CRITICAL: Reset timers and lastDoneAt for new set
+    const timeControl = game.timeControl || 1800;
+    
+    const updatedGameState = {
+      ...gameState,
+      ...resetBoardState,
+      currentPlayer: winner,
+      phase: 'waiting',
+      diceValues: [],
+      nextRoll: updatedNextRoll,
+      nextDiceRoll: newDice,
+      currentTurnDice: null,
+      
+      // ⏱️ CRITICAL: Reset timer tracking
+      lastDoneBy: loser, // Winner's timer starts (loser "pressed Done")
+      lastDoneAt: new Date().toISOString(), // Reset to NOW
+      turnCompleted: false,
+    };
+
+    const updatedGame = await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        gameState: updatedGameState,
+        // ⏱️ Reset timers to full time
+        whiteTimeRemaining: timeControl,
+        blackTimeRemaining: timeControl,
+        updatedAt: new Date(),
+      },
+      include: {
+        whitePlayer: true,
+        blackPlayer: true,
+      },
+    });
+
+    console.log('⏱️ New set timers reset:', {
+      timeControl,
+      lastDoneBy: loser,
+      lastDoneAt: updatedGameState.lastDoneAt,
+      winner,
+    });
+
+    // 📡 Emit game state update via WebSocket
+    this.emitGameStateUpdate(gameId, updatedGame.gameState);
+
+    // 📡 Emit timer update
+    this.emitTimerUpdate(gameId, {
+      white: timeControl,
+      black: timeControl,
+    });
+
+    return {
+      message: 'New set started',
+      winner,
+      nextRoll: updatedNextRoll,
+      timers: {
+        white: timeControl,
+        black: timeControl,
+      },
+      game: {
+        id: updatedGame.id,
+        gameState: updatedGame.gameState,
+        status: updatedGame.status,
+      },
+    };
+  }
+
+  /**
    * ✅ Check if user can play
    * Returns: can they roll dice? or is it opponent's turn and they haven't finished?
    */
